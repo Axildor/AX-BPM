@@ -1,6 +1,6 @@
 {
   "domain": "ax_bpm",
-  "name": "AX-BPM",
+  "name": "AX BPM",
   "codeowners": ["@adix992"],
   "config_flow": true,
   "dependencies": [],

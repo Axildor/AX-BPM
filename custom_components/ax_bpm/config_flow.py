@@ -1,4 +1,4 @@
-"""Config flow for AX-BPM (UI only, no YAML)."""
+"""Config flow for AX BPM (UI only, no YAML)."""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def _build_schema(defaults: dict) -> vol.Schema:
 
 
 class AxBpmOptionsHandler(config_entries.OptionsFlow):
-    """Handle options for AX-BPM."""
+    """Handle options for AX BPM."""
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
@@ -78,7 +78,7 @@ class AxBpmOptionsHandler(config_entries.OptionsFlow):
 
 
 class AxBpmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Config flow for AX-BPM."""
+    """Config flow for AX BPM."""
 
     VERSION = 1
 

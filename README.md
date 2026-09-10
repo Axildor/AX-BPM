@@ -1,4 +1,4 @@
-# AX-BPM for Home Assistant
+# AX BPM for Home Assistant
 
 A custom Home Assistant integration that publishes a sensor holding the
 currently playing track's tempo (BPM). Built for the
@@ -11,7 +11,7 @@ key, no account, and no OAuth. Setup is UI-only; no YAML required.
 ## How it works
 
 When the tracked `media_player` starts a new track (debounced a few seconds),
-AX-BPM resolves its tempo in this order:
+AX BPM resolves its tempo in this order:
 
 1. **Cache** — a persistent store (`.storage`, survives restarts) keyed on
    the track's ISRC (or a hash of artist/title/duration). A hit publishes
@@ -22,7 +22,7 @@ AX-BPM resolves its tempo in this order:
    (±3 s, highest popularity wins), then the track's `bpm` field.
    If Deezer reports a BPM, it is published as-is.
 3. **Local analysis** — Deezer frequently reports `bpm: 0` even for
-   top-tier catalog. In that case AX-BPM downloads the track's ~30 s
+   top-tier catalog. In that case AX BPM downloads the track's ~30 s
    preview once and runs two analyzers on it:
    - **aubio** for tempo (60 / median inter-beat interval), and
    - **Essentia SVM mood models** for octave-disambiguation signals.
@@ -31,7 +31,7 @@ On any failure the sensor goes `unknown` — it **never publishes 0**.
 
 ## Octave disambiguation (plain language)
 
-Beat trackers sometimes report half or double the real tempo. AX-BPM only
+Beat trackers sometimes report half or double the real tempo. AX BPM only
 ever corrects a raw estimate inside two narrow windows, and only when the
 music itself says so:
 
@@ -64,7 +64,7 @@ locally analyzed estimate.
 
 ## Configuration
 
-Settings → Devices & Services → **Add Integration** → **AX-BPM**:
+Settings → Devices & Services → **Add Integration** → **AX BPM**:
 
 | Option | Description |
 | --- | --- |

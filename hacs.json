@@ -1,5 +1,5 @@
 {
-  "name": "AX-BPM",
+  "name": "AX BPM",
   "render_readme": true,
   "hacs": "1.33.0",
   "homeassistant": "2024.1.0",

@@ -1,4 +1,4 @@
-"""The AX-BPM integration."""
+"""The AX BPM integration."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up AX-BPM from a config entry."""
+    """Set up AX BPM from a config entry."""
     session = aiohttp.ClientSession()
     cache = BpmCache(hass)
     await cache.async_load()

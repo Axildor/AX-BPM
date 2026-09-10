@@ -1,4 +1,4 @@
-"""Constants for the AX-BPM integration.
+"""Constants for the AX BPM integration.
 
 All tunable values live here. The octave-disambiguation windows, thresholds
 and genre whitelists are the core of the correction logic — tune them with
@@ -6,7 +6,7 @@ care, see math.py for the exact decision order.
 """
 
 DOMAIN = "ax_bpm"
-NAME = "AX-BPM"
+NAME = "AX BPM"
 
 # ---------------------------------------------------------------------------
 # Configuration keys (config flow + options flow)

@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "AX-BPM Configuration",
+        "title": "AX BPM Configuration",
         "description": "Track the tempo (BPM) of the currently playing media. All network requests are anonymous — no API key required. {mood_warning}",
         "data": {
           "media_player": "Media Player",
@@ -21,8 +21,8 @@
   "options": {
     "step": {
       "init": {
-        "title": "AX-BPM Options",
-        "description": "Update your AX-BPM configuration.",
+        "title": "AX BPM Options",
+        "description": "Update your AX BPM configuration.",
         "data": {
           "media_player": "Media Player",
           "genre_correction": "Genre-based octave disambiguation",

@@ -1,4 +1,4 @@
-"""AX-BPM sensor entity.
+"""AX BPM sensor entity.
 
 Push-only (should_poll=False): reacts to media_player state changes.
 - state: final BPM (float), unit "BPM", state_class "measurement"
@@ -39,10 +39,10 @@ async def async_setup_entry(
     entry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the AX-BPM sensor from a config entry."""
+    """Set up the AX BPM sensor from a config entry."""
     media_player_id = entry.data.get(CONF_MEDIA_PLAYER)
     if not media_player_id:
-        _LOGGER.error("No media player configured for AX-BPM")
+        _LOGGER.error("No media player configured for AX BPM")
         return
 
     pipeline = hass.data[DOMAIN][entry.entry_id]["pipeline"]
@@ -145,7 +145,7 @@ class AxBpmSensor(SensorEntity):
                 artist, title, duration
             )
         except Exception:  # noqa: BLE001 — a failure must never crash HA
-            _LOGGER.exception("AX-BPM resolution failed")
+            _LOGGER.exception("AX BPM resolution failed")
             result = None
 
         if result is None:
