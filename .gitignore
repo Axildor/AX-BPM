@@ -5,9 +5,43 @@ plans/
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
 .pytest_cache/
 .venv/
 venv/
+env/
+*.egg-info/
+.eggs/
+build/
+dist/
 
-# Home Assistant dev config
+# Testing / coverage
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Linters / type checkers
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.dmypy.json
+
+# Home Assistant dev config & runtime
 config/
+.hass/
+*.storage/
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
