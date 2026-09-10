@@ -138,15 +138,65 @@ async def test_find_match_duration_filter_and_rank():
     client = DeezerClient(MagicMock())
     client.search_tracks = AsyncMock(
         return_value=[
-            {"id": 1, "duration": 224, "rank": 100},
-            {"id": 2, "duration": 300, "rank": 999999},  # out of ±3s
-            {"id": 3, "duration": 225, "rank": 500},
+            {"id": 1, "duration": 224, "rank": 100, "artist": {"name": "Daft Punk"}},
+            {"id": 2, "duration": 300, "rank": 999999, "artist": {"name": "Daft Punk"}},  # out of ±3s
+            {"id": 3, "duration": 225, "rank": 500, "artist": {"name": "Daft Punk"}},
         ]
     )
     # Candidates within ±3s tolerance: id 1 (rank 100) and id 3 (rank 500);
     # id 2 (duration 300) is filtered out. Highest rank wins → id 3.
     match = await client.find_match("Daft Punk", "Test", 224.0)
     assert match["id"] == 3
+
+
+@pytest.mark.asyncio
+async def test_search_tracks_falls_back_to_plain_text():
+    """Field-quoted query returns nothing → plain-text retry is used."""
+    client = DeezerClient(MagicMock())
+    calls: list[str] = []
+
+    async def fake_get_json(path, params=None):
+        calls.append(params["q"])
+        if "artist:" in params["q"]:
+            return {"data": []}  # field-quoted → 0 results (Deezer 2026-09)
+        return {"data": [{"id": 2511224, "title": "Kryptonite"}]}
+
+    client._get_json = fake_get_json
+    results = await client.search_tracks("3 Doors Down", "Kryptonite")
+    assert results and results[0]["id"] == 2511224
+    assert calls == [
+        'artist:"3 Doors Down" track:"Kryptonite"',
+        "3 Doors Down Kryptonite",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_find_match_rejects_wrong_artist():
+    """Plain-text results from a different artist are never matched."""
+    client = DeezerClient(MagicMock())
+    client.search_tracks = AsyncMock(
+        return_value=[
+            # Right title/duration, WRONG artist — must be rejected.
+            {"id": 9, "duration": 224, "rank": 9999999, "artist": {"name": "Some Cover Band"}},
+            {"id": 3, "duration": 225, "rank": 500, "artist": {"name": "Daft Punk"}},
+        ]
+    )
+    match = await client.find_match("Daft Punk", "Test", 224.0)
+    assert match["id"] == 3
+
+
+@pytest.mark.asyncio
+async def test_find_match_artist_variant_accepted():
+    """Artist variants (feat. suffixes, case) still verify."""
+    client = DeezerClient(MagicMock())
+    client.search_tracks = AsyncMock(
+        return_value=[
+            {"id": 5, "duration": 224, "rank": 100, "artist": {"name": "daft punk"}},
+            {"id": 6, "duration": 224, "rank": 200, "artist": {"name": "Daft Punk feat. Someone"}},
+        ]
+    )
+    match = await client.find_match("Daft Punk", "Test", 224.0)
+    assert match["id"] == 6  # higher rank wins among verified candidates
 
 
 # ---------------------------------------------------------------------------

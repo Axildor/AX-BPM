@@ -72,8 +72,6 @@ Settings → Devices & Services → **Add Integration** → **AX BPM**:
 | Genre-based octave disambiguation | Use Deezer album genres in the correction rules (default: on). |
 | Mood-based octave disambiguation | Use Essentia mood classifiers (default: on; auto-disables with a warning if Essentia is unavailable). |
 | External aubio binary | Path to an `aubio` CLI binary, used when the Python package is missing. |
-| External analyzer helper | Path to an external analyzer helper script/binary (subprocess mode). |
-| GetSongKEY API key | Optional additional metadata fallback (disabled by default). |
 
 ## Sensor
 
@@ -88,16 +86,25 @@ the last update time.
 ## Dependency footprint
 
 The base install has **no extra dependencies** — Deezer matching and the
-cache work out of the box. Optional local analysis adds:
+cache work out of the box, and **local BPM analysis works out of the box**
+too: a built-in NumPy tempo estimator (spectral-flux onsets +
+autocorrelation) decodes previews via the `ffmpeg` binary that ships with
+official Home Assistant images (or the `miniaudio`/`soundfile` wheels when
+installed).
+
+Optional accuracy upgrades, picked up automatically when importable:
 
 - `aubio` (Python package, or any external `aubio` CLI binary) — tempo.
-- `essentia` (Python package) — SVM mood classifiers. The five mood model
-  files (`.history`, CC BY-NC-ND licensed) are looked up in the wheel's
-  package data; if absent they are downloaded **once** into the
-  integration's storage directory at first setup.
+- `essentia` (Python package) — tempo (RhythmExtractor2013) and SVM mood
+  classifiers. The five mood model files (`.history`, CC BY-NC-ND licensed)
+  are looked up in the wheel's package data; if absent they are downloaded
+  **once** into the integration's storage directory at first setup.
 
-Missing analyzers degrade gracefully: mood+genre → genre-only → raw.
-A missing analyzer never delays or blocks the sensor.
+The analyzer chain is aubio → aubio CLI → Essentia → built-in NumPy; the
+first backend that produces a BPM wins (shown in the sensor's source
+attribute as `aubio`, `essentia`, or `numpy`). Missing analyzers degrade
+gracefully: mood+genre → genre-only → raw. A missing analyzer never delays
+or blocks the sensor.
 
 ## Non-goals
 

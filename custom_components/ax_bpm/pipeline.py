@@ -31,6 +31,8 @@ from .const import (
     OVERALL_BUDGET,
     SOURCE_AUBIO,
     SOURCE_DEEZER,
+    SOURCE_ESSENTIA,
+    SOURCE_NUMPY,
 )
 from .deezer import DeezerClient, parse_artist_title
 from .mood import MoodAnalyzer
@@ -115,6 +117,10 @@ class BpmPipeline:
         key = cache_key(None, artist, title, duration)
         cached = self._cache.get(key)
         if cached and cached.get("bpm"):
+            _LOGGER.debug(
+                "AX BPM cache hit for %s - %s → %s BPM",
+                artist, title, cached["bpm"],
+            )
             return ResolutionResult(cached["bpm"], **{
                 "source": "cache",
                 **{k: v for k, v in cached.items() if k != "bpm"},
@@ -129,19 +135,38 @@ class BpmPipeline:
         except asyncio.TimeoutError:
             result = None
         if result is not None:
+            _LOGGER.info(
+                "AX BPM: %s - %s → %.1f BPM (source: %s)",
+                artist, title, result.bpm, result.source,
+            )
             return result
         if time.monotonic() > deadline or self._current_token != token:
+            _LOGGER.info(
+                "AX BPM: %s - %s → unresolved (budget exceeded or track "
+                "changed before Deezer match)", artist, title,
+            )
             return None
 
         # 3. Local analysis fallback (Deezer bpm == 0 or no confident match).
         try:
-            return await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 self._resolve_local(artist, title, duration, key, deadline),
                 timeout=max(0.1, deadline - time.monotonic()),
             )
         except asyncio.TimeoutError:
             _LOGGER.debug("Overall budget exceeded for %s - %s", artist, title)
             return None
+        if result is None:
+            _LOGGER.info(
+                "AX BPM: %s - %s → unresolved (no Deezer match with bpm, "
+                "and local analysis unavailable or failed)", artist, title,
+            )
+        else:
+            _LOGGER.info(
+                "AX BPM: %s - %s → %.1f BPM (source: %s)",
+                artist, title, result.bpm, result.source,
+            )
+        return result
 
     async def _resolve_deezer(
         self,
@@ -163,6 +188,11 @@ class BpmPipeline:
         album_id = (track.get("album") or {}).get("id")
         genres = (
             await self._deezer.get_album_genres(album_id) if album_id else []
+        )
+
+        _LOGGER.debug(
+            "Deezer track %s: bpm=%s, isrc=%s, preview=%s",
+            match["id"], deezer_bpm, isrc, bool(track.get("preview")),
         )
 
         # Deezer metadata bpm present → publish as-is, NEVER corrected.
@@ -251,7 +281,7 @@ class BpmPipeline:
             if not self._genre_correction:
                 genres = []
 
-            # Octave disambiguation — only on the local aubio estimate.
+            # Octave disambiguation — only on the local tempo estimate.
             disambiguated = bpm_math.apply_octave_disambiguation(
                 bpm_raw, mood_scores, genres
             )
@@ -259,9 +289,16 @@ class BpmPipeline:
             mood_label = (
                 max(mood_scores, key=mood_scores.get) if mood_scores else None
             )
+            backend = getattr(self._aubio, "last_backend", None) or "aubio"
+            source = {
+                "aubio": SOURCE_AUBIO,
+                "aubio_cli": SOURCE_AUBIO,
+                "essentia": SOURCE_ESSENTIA,
+                "numpy": SOURCE_NUMPY,
+            }.get(backend, SOURCE_AUBIO)
             result = ResolutionResult(
                 disambiguated["bpm"],
-                source=SOURCE_AUBIO,
+                source=source,
                 track=f"{artist} - {title}",
                 isrc=match.get("isrc"),
                 deezer_track_id=match.get("deezer_track_id"),

@@ -13,8 +13,6 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_AUBIO_BINARY,
     CONF_GENRE_CORRECTION,
-    CONF_GETSONGKEY_API_KEY,
-    CONF_HELPER_SCRIPT,
     CONF_MEDIA_PLAYER,
     CONF_MOOD_CORRECTION,
     DOMAIN,
@@ -46,8 +44,6 @@ def _build_schema(defaults: dict) -> vol.Schema:
     schema.update(
         {
             vol.Optional(CONF_AUBIO_BINARY, default=defaults.get(CONF_AUBIO_BINARY, "")): str,
-            vol.Optional(CONF_HELPER_SCRIPT, default=defaults.get(CONF_HELPER_SCRIPT, "")): str,
-            vol.Optional(CONF_GETSONGKEY_API_KEY, default=defaults.get(CONF_GETSONGKEY_API_KEY, "")): str,
         }
     )
     return vol.Schema(schema)

@@ -1,4 +1,10 @@
 {
+  "issues": {
+    "no_tempo_analyzer": {
+      "title": "AX BPM: no local tempo analyzer available",
+      "description": "AX BPM is tracking {entry_title}. Deezer metadata covers most tracks, but tracks where Deezer reports bpm: 0 need local audio analysis. Neither the aubio Python package nor an external aubio binary is available, so those tracks will resolve to unknown.\n\nTo fix: install the aubio package in the Home Assistant environment (e.g. `pip install aubio`), or set the \"Path to external aubio binary\" option in the AX BPM integration settings to an installed aubio CLI binary."
+    }
+  },
   "config": {
     "step": {
       "user": {
@@ -8,9 +14,7 @@
           "media_player": "Media Player",
           "genre_correction": "Genre-based octave disambiguation",
           "mood_correction": "Mood-based octave disambiguation",
-          "aubio_binary": "Path to external aubio binary (optional)",
-          "helper_script": "Path to external analyzer helper script (optional)",
-          "getsongkey_api_key": "GetSongKEY API key (optional fallback, disabled by default)"
+          "aubio_binary": "Path to external aubio binary (optional)"
         }
       }
     },
@@ -27,9 +31,7 @@
           "media_player": "Media Player",
           "genre_correction": "Genre-based octave disambiguation",
           "mood_correction": "Mood-based octave disambiguation",
-          "aubio_binary": "Path to external aubio binary (optional)",
-          "helper_script": "Path to external analyzer helper script (optional)",
-          "getsongkey_api_key": "GetSongKEY API key (optional fallback, disabled by default)"
+          "aubio_binary": "Path to external aubio binary (optional)"
         }
       }
     }

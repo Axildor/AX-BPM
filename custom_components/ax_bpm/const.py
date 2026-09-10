@@ -15,8 +15,6 @@ CONF_MEDIA_PLAYER = "media_player"
 CONF_GENRE_CORRECTION = "genre_correction"
 CONF_MOOD_CORRECTION = "mood_correction"
 CONF_AUBIO_BINARY = "aubio_binary"
-CONF_HELPER_SCRIPT = "helper_script"
-CONF_GETSONGKEY_API_KEY = "getsongkey_api_key"
 
 # ---------------------------------------------------------------------------
 # Octave disambiguation — core tunables (see math.py for the decision order)
@@ -60,12 +58,20 @@ TRACK_DEBOUNCE = 3.0
 DURATION_TOLERANCE = 3.0
 
 # ---------------------------------------------------------------------------
+# Local analysis — decode + tempo chain
+# ---------------------------------------------------------------------------
+# Sample rate the local analysis chain decodes to (mono float32).
+DECODE_SAMPLE_RATE = 22050
+
+# ---------------------------------------------------------------------------
 # Platforms / sensor metadata
 # ---------------------------------------------------------------------------
 PLATFORMS = ["sensor"]
 UNIT_BPM = "BPM"
 SOURCE_DEEZER = "deezer_metadata"
 SOURCE_AUBIO = "aubio"
+SOURCE_ESSENTIA = "essentia"
+SOURCE_NUMPY = "numpy"
 SOURCE_CACHE = "cache"
 
 # Essentia SVM mood classifiers used (five S_x signals).

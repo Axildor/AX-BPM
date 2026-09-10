@@ -31,6 +31,13 @@ _TITLE_NOISE = re.compile(
 _FEAT_TAIL = re.compile(r"\s+(?:feat\.?|ft\.?|featuring)\s+.*$", re.IGNORECASE)
 
 
+def _norm(text: str | None) -> str:
+    """Light artist-name normalization: lowercase, collapse whitespace."""
+    if not text:
+        return ""
+    return " ".join(text.lower().split())
+
+
 def clean_title(title: str) -> str:
     """Strip (Remix)/(Radio Edit)/feat. suffixes for the retry query."""
     cleaned = _TITLE_NOISE.sub("", title)
@@ -64,14 +71,28 @@ class DeezerClient:
     async def search_tracks(
         self, artist: str, title: str
     ) -> list[dict]:
-        """Field-quoted search: artist:"X" track:"Y". Returns data list."""
-        query = f'artist:"{artist}" track:"{title}"'
-        data = await self._get_json(
-            "/search", {"q": query, "limit": 25}
+        """Search Deezer for tracks. Returns data list.
+
+        Tries the field-quoted query first (artist:"X" track:"Y"); Deezer
+        has disabled the artist: field operator (returns 0 results since
+        ~2026-09), so fall back to plain-text "{artist} {title}" when the
+        quoted query yields nothing.
+        """
+        queries = [f'artist:"{artist}" track:"{title}"', f"{artist} {title}"]
+        for query in queries:
+            data = await self._get_json(
+                "/search", {"q": query, "limit": 25}
+            )
+            results = list((data or {}).get("data") or [])
+            if results:
+                _LOGGER.debug(
+                    "Deezer search %r → %d results", query, len(results)
+                )
+                return results
+        _LOGGER.debug(
+            "Deezer search: no results for %r (all query variants)", title
         )
-        if not data:
-            return []
-        return list(data.get("data") or [])
+        return []
 
     async def find_match(
         self,
@@ -84,24 +105,56 @@ class DeezerClient:
         Prefer duration within ±DURATION_TOLERANCE of media_duration (hard
         filter when available), then highest rank wins. Falls back to a
         cleaned title when the first attempt yields nothing usable.
+
+        Plain-text fallback results can include wrong-artist tracks, so
+        candidates are verified against the artist name (normalized
+        substring match on the candidate's artist name) before ranking.
         """
+        want_artist = _norm(artist)
         for attempt_title in (title, clean_title(title)):
             if not attempt_title:
                 continue
             candidates = await self.search_tracks(artist, attempt_title)
+            # Artist verification: the candidate's artist name must contain
+            # the wanted artist (or vice versa) after normalization. Handles
+            # "3 Doors Down" vs "3 Doors Down feat. X" style variants.
+            verified = [
+                c
+                for c in candidates
+                if want_artist
+                and (
+                    want_artist in _norm((c.get("artist") or {}).get("name"))
+                    or _norm((c.get("artist") or {}).get("name"))
+                    in want_artist
+                )
+            ]
             if duration is not None:
                 filtered = [
                     c
-                    for c in candidates
+                    for c in verified
                     if isinstance(c.get("duration"), (int, float))
                     and abs(c["duration"] - duration) <= DURATION_TOLERANCE
                 ]
             else:
-                filtered = candidates
+                filtered = verified
             if filtered:
-                return max(
-                    filtered, key=lambda c: c.get("rank") or 0
+                best = max(filtered, key=lambda c: c.get("rank") or 0)
+                _LOGGER.debug(
+                    "Deezer match: %s - %s (id=%s, dur=%s, rank=%s)",
+                    (best.get("artist") or {}).get("name"),
+                    best.get("title"),
+                    best.get("id"),
+                    best.get("duration"),
+                    best.get("rank"),
                 )
+                return best
+            _LOGGER.debug(
+                "Deezer: no verified/duration-matched candidate for "
+                "%s - %s (%d raw candidates)",
+                artist,
+                attempt_title,
+                len(candidates),
+            )
         return None
 
     async def get_track(self, track_id: int | str) -> dict | None:
@@ -132,14 +185,17 @@ class DeezerClient:
                 timeout=aiohttp.ClientTimeout(total=NETWORK_TIMEOUT),
             ) as resp:
                 if resp.status != 200:
-                    _LOGGER.debug("Preview download HTTP %s", resp.status)
+                    _LOGGER.info(
+                        "AX BPM: preview download failed (HTTP %s)", resp.status
+                    )
                     return False
                 with open(dest_path, "wb") as fh:
                     async for chunk in resp.content.iter_chunked(64 * 1024):
                         fh.write(chunk)
+            _LOGGER.debug("AX BPM: preview downloaded to %s", dest_path)
             return True
         except (aiohttp.ClientError, TimeoutError, OSError) as err:
-            _LOGGER.debug("Preview download failed: %s", err)
+            _LOGGER.info("AX BPM: preview download failed: %s", err)
             return False
 
 
