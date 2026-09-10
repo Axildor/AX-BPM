@@ -1,2 +1,0 @@
-DOMAIN = "songbpm"
-NAME = "SongBPM"

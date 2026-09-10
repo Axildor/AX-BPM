@@ -1,0 +1,13 @@
+# AI context — never committed
+memory-bank/
+plans/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Home Assistant dev config
+config/

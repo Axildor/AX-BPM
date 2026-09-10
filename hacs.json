@@ -1,9 +1,9 @@
 {
-  "name": "SongBPM",
+  "name": "AX-BPM",
   "render_readme": true,
   "hacs": "1.33.0",
   "homeassistant": "2024.1.0",
   "iot_class": "cloud_polling",
-  "domain": "songbpm",
-  "issue_tracker": "https://github.com/adix992/SongBPM-26/issues"
+  "domain": "ax_bpm",
+  "issue_tracker": "https://github.com/adix992/AX-BPM/issues"
 }

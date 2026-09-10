@@ -1,0 +1,37 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "AX-BPM Configuration",
+        "description": "Track the tempo (BPM) of the currently playing media. All network requests are anonymous — no API key required. {mood_warning}",
+        "data": {
+          "media_player": "Media Player",
+          "genre_correction": "Genre-based octave disambiguation",
+          "mood_correction": "Mood-based octave disambiguation",
+          "aubio_binary": "Path to external aubio binary (optional)",
+          "helper_script": "Path to external analyzer helper script (optional)",
+          "getsongkey_api_key": "GetSongKEY API key (optional fallback, disabled by default)"
+        }
+      }
+    },
+    "error": {
+      "unknown": "Unexpected error"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "AX-BPM Options",
+        "description": "Update your AX-BPM configuration.",
+        "data": {
+          "media_player": "Media Player",
+          "genre_correction": "Genre-based octave disambiguation",
+          "mood_correction": "Mood-based octave disambiguation",
+          "aubio_binary": "Path to external aubio binary (optional)",
+          "helper_script": "Path to external analyzer helper script (optional)",
+          "getsongkey_api_key": "GetSongKEY API key (optional fallback, disabled by default)"
+        }
+      }
+    }
+  }
+}
