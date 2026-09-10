@@ -28,32 +28,21 @@ _LOGGER = logging.getLogger(__name__)
 def _build_schema(defaults: dict) -> vol.Schema:
     mood_default = defaults.get(CONF_MOOD_CORRECTION, True)
     schema = {
-        vol.Required(CONF_MEDIA_PLAYER, default=defaults.get(CONF_MEDIA_PLAYER, "")): selector.selector(
-            {"entity": {"domain": "media_player"}}
+        vol.Required(CONF_MEDIA_PLAYER, default=defaults.get(CONF_MEDIA_PLAYER, "")): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="media_player")
         ),
-        vol.Required(CONF_GENRE_CORRECTION, default=defaults.get(CONF_GENRE_CORRECTION, True)): selector.selector(
-            {"boolean": {}}
-        ),
+        vol.Required(CONF_GENRE_CORRECTION, default=defaults.get(CONF_GENRE_CORRECTION, True)): selector.BooleanSelector(),
     }
     if essentia_available():
         schema[
             vol.Required(CONF_MOOD_CORRECTION, default=mood_default)
-        ] = selector.selector({"boolean": {}})
+        ] = selector.BooleanSelector()
     else:
-        # Auto-disable mood correction with a warning when Essentia is
-        # unavailable; the field is still shown (disabled) for visibility.
+        # Auto-disable mood correction when Essentia is unavailable; the
+        # field is still shown for visibility and defaults to False.
         schema[
             vol.Required(CONF_MOOD_CORRECTION, default=False)
-        ] = selector.selector(
-            {
-                "boolean": {},
-                "ui": {
-                    "description": {
-                        "suggested_value": False,
-                    }
-                },
-            }
-        )
+        ] = selector.BooleanSelector()
     schema.update(
         {
             vol.Optional(CONF_AUBIO_BINARY, default=defaults.get(CONF_AUBIO_BINARY, "")): str,
