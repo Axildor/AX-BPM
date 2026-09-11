@@ -26,9 +26,8 @@ def _update_analyzer_issue(hass: HomeAssistant, entry: ConfigEntry) -> None:
     is almost always available; this issue now only fires when no decoder
     and no analyzer exist at all (e.g. ffmpeg missing and no wheels).
     """
-    registry = ir.async_get(hass)
     if aubio_available(entry.options.get(CONF_AUBIO_BINARY)):
-        registry.async_delete_issue(DOMAIN, ISSUE_NO_ANALYZER)
+        ir.async_delete_issue(hass, DOMAIN, ISSUE_NO_ANALYZER)
     else:
         ir.async_create_issue(
             hass,
@@ -74,8 +73,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        registry = ir.async_get(hass)
-        registry.async_delete_issue(DOMAIN, ISSUE_NO_ANALYZER)
+        ir.async_delete_issue(hass, DOMAIN, ISSUE_NO_ANALYZER)
         data = hass.data[DOMAIN].pop(entry.entry_id, {})
         session = data.get("session")
         if session:
