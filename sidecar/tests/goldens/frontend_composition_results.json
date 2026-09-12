@@ -1,0 +1,34 @@
+{
+  "verdict": "PASS",
+  "tolerance": 0.001,
+  "results": {
+    "chirp_sweep": {
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "sha256_match": true,
+      "n_patches": 29,
+      "pass": true
+    },
+    "click_160bpm": {
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "sha256_match": true,
+      "n_patches": 29,
+      "pass": true
+    },
+    "click_90bpm": {
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "sha256_match": true,
+      "n_patches": 29,
+      "pass": true
+    },
+    "pink_noise": {
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "sha256_match": true,
+      "n_patches": 29,
+      "pass": true
+    }
+  }
+}

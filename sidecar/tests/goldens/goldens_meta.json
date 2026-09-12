@@ -1,0 +1,115 @@
+{
+  "generated_with": {
+    "essentia": "2.1-beta6-dev",
+    "tensorflow": "2.20.0",
+    "python": "3.12.14"
+  },
+  "models": {
+    "effnet_pb": {
+      "url": "https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs-effnet-bs64-1.pb",
+      "filename": "discogs-effnet-bs64-1.pb",
+      "size": 18366619,
+      "sha256": "3ed9af50d5367c0b9c795b294b00e7599e4943244f4cbd376869f3bfc87721b1"
+    },
+    "moodtheme_head": {
+      "url": "https://essentia.upf.edu/models/classification-heads/mtg_jamendo_moodtheme/mtg_jamendo_moodtheme-discogs-effnet-1.pb",
+      "filename": "mtg_jamendo_moodtheme-discogs-effnet-1.pb",
+      "size": 2739668,
+      "sha256": "03f2b047020aee4ab39f8880da7bdae2a36d06a1508d656c6d424ad4d6de07a9"
+    },
+    "danceability_head": {
+      "url": "https://essentia.upf.edu/models/classification-heads/danceability/danceability-discogs-effnet-1.pb",
+      "filename": "danceability-discogs-effnet-1.pb",
+      "size": 514458,
+      "sha256": "e1251f02cdc846445e2bc1fb3fe9963e32728c5c000e009188ae47c8963cb4c4"
+    },
+    "effnet_onnx": {
+      "url": "https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs-effnet-bsdynamic-1.onnx",
+      "filename": "discogs-effnet-bsdynamic-1.onnx",
+      "size": 18027718,
+      "sha256": "a280825b334797cf677939db8cd5762c0392aedd0ca6415dbc1cd083f045e43c"
+    }
+  },
+  "front_end_specs": {
+    "effnet": {
+      "component": "TensorflowInputMusiCNN (shared with effnet predict)",
+      "constants_used": {
+        "sampleRate": 16000,
+        "frameSize": 512,
+        "hopSize": 256,
+        "numberBands": 96,
+        "lowFrequencyBound": 0.0,
+        "highFrequencyBound": 8000.0,
+        "warpingFormula": "slaneyMel",
+        "weighting": "linear",
+        "normalize": "unit_tri",
+        "bandsType": "power",
+        "windowType": "hann",
+        "windowNormalized": false,
+        "shift": 1.0,
+        "scale": 10000.0,
+        "compression": "log10",
+        "patchSize": 128,
+        "patchHopSize": 62,
+        "lastPatchMode": "repeat",
+        "batchSize": 64,
+        "lastBatchMode": "discard"
+      }
+    },
+    "musicnn": {
+      "component": "TensorflowInputMusiCNN",
+      "constants_used": {
+        "sampleRate": 16000,
+        "frameSize": 512,
+        "hopSize": 256,
+        "numberBands": 96,
+        "patchSize": 187,
+        "patchHopSize": 187,
+        "lastPatchMode": "repeat"
+      }
+    }
+  },
+  "pooling": "mean over per-patch embeddings [n,1280] -> single 1280-d vector; heads run on the pooled vector",
+  "clips": {
+    "chirp_sweep": {
+      "n_frames": 1876,
+      "n_patches_effnet": 29,
+      "n_patches_musicnn": 10,
+      "patch_effnet_sha256": "5c592f14806e096b887b7b7c1ad5aa15d206017eb4ce6ec12d162087f38efb72",
+      "patch_musicnn_sha256": "2284adf4fc65697f25f952a54d035b3550459a97a8f0416aacf5a6cdd72af101",
+      "embedding_dim": 1280,
+      "pooled_emb_norm": 2.6436522006988525
+    },
+    "click_160bpm": {
+      "n_frames": 1876,
+      "n_patches_effnet": 29,
+      "n_patches_musicnn": 10,
+      "patch_effnet_sha256": "a463718aa4e7abd1626431e30266114a46f91c080135fec287d39c13b02e298d",
+      "patch_musicnn_sha256": "016e6984a3b1a108b97110cfd602230f681ec189a149c0ee18ca148ed2c364aa",
+      "embedding_dim": 1280,
+      "pooled_emb_norm": 3.0581929683685303
+    },
+    "click_90bpm": {
+      "n_frames": 1876,
+      "n_patches_effnet": 29,
+      "n_patches_musicnn": 10,
+      "patch_effnet_sha256": "0c069e5d7f74d2896b81c2e8e6b546aae8eda0e97af87f907934f108bd98567d",
+      "patch_musicnn_sha256": "9a89112eb5c4a4d76a1eeb4ac97b1fba1bcef31f4af72fef8db80314f20e0291",
+      "embedding_dim": 1280,
+      "pooled_emb_norm": 2.55313777923584
+    },
+    "pink_noise": {
+      "n_frames": 1876,
+      "n_patches_effnet": 29,
+      "n_patches_musicnn": 10,
+      "patch_effnet_sha256": "6bb95edea2f516120ec0f86d61e871b275066f9a9a7cfa090b1e64b056e932a1",
+      "patch_musicnn_sha256": "29546a784c330fd825d9faaa50f653814023661522ff7c10f09f785ee4b72772",
+      "embedding_dim": 1280,
+      "pooled_emb_norm": 3.1262238025665283
+    }
+  },
+  "patch_subsample": {
+    "frames": 16,
+    "note": "strided subsample of first patch; full-patch sha256 in clips[].patch_effnet_sha256"
+  }
+}
