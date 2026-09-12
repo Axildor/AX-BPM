@@ -29,6 +29,10 @@ jobs:
     env:
       AXBPM_REQUIRE_ONNX: "1"
       AXBPM_CI_MODEL_DIR: ${{ github.workspace }}/.axbpm-models
+      # API tests install their own stubbed engine; without this the app
+      # lifespan would try to bootstrap /data (not writable by the runner
+      # user). The golden tests build their own ModelManager explicitly.
+      AXBPM_SKIP_BOOTSTRAP: "1"
     steps:
       - uses: actions/checkout@v4
 

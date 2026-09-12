@@ -106,7 +106,7 @@ def test_head_probs_golden(engine, clips_16k, name):
     theme = engine._head("moodtheme", pooled)
     assert theme is not None, "pinned moodtheme output rejected by [0,1] guard"
     assert theme.min() >= 0.0 and theme.max() <= 1.0
-    ref_theme = goldens[f"{name}__moodtheme_probs"]
+    ref_theme = goldens[f"{name}__mood_probs"]
     assert float(np.abs(theme - ref_theme).max()) <= PROB_TOL
 
     dance = engine._head("danceability", pooled)

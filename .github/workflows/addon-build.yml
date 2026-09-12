@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build ${{ matrix.arch }}
-        uses: home-assistant/builder@2024.08.3
+        uses: home-assistant/builder@2026.06.0
         with:
           args: |
             --all \
