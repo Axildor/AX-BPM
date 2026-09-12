@@ -41,11 +41,11 @@ MODELS = {
         "discogs-effnet-bs64-1.pb",
     ),
     "moodtheme_head": (
-        f"{BASE}/classification-heads/mtg_jamendo_moodtheme-discogs-effnet-1.pb",
+        f"{BASE}/classification-heads/mtg_jamendo_moodtheme/mtg_jamendo_moodtheme-discogs-effnet-1.pb",
         "mtg_jamendo_moodtheme-discogs-effnet-1.pb",
     ),
     "danceability_head": (
-        f"{BASE}/classification-heads/danceability-discogs-effnet-1.pb",
+        f"{BASE}/classification-heads/danceability/danceability-discogs-effnet-1.pb",
         "danceability-discogs-effnet-1.pb",
     ),
     "effnet_onnx": (

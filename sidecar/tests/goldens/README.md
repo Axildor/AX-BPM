@@ -49,8 +49,8 @@ goldens, runs the gate, and commits refreshed goldens back.
 |---|---|---|
 | discogs-effnet-bs64-1.pb | https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs-effnet-bs64-1.pb | ~21 MB |
 | discogs-effnet-bsdynamic-1.onnx | https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs-effnet-bsdynamic-1.onnx | ~18 MB |
-| mtg_jamendo_moodtheme-discogs-effnet-1.pb | https://essentia.upf.edu/models/classification-heads/mtg_jamendo_moodtheme-discogs-effnet-1.pb | ~2.7 MB |
-| danceability-discogs-effnet-1.pb | https://essentia.upf.edu/models/classification-heads/danceability-discogs-effnet-1.pb | ~0.5 MB |
+| mtg_jamendo_moodtheme-discogs-effnet-1.pb | https://essentia.upf.edu/models/classification-heads/mtg_jamendo_moodtheme/mtg_jamendo_moodtheme-discogs-effnet-1.pb | ~2.7 MB |
+| danceability-discogs-effnet-1.pb | https://essentia.upf.edu/models/classification-heads/danceability/danceability-discogs-effnet-1.pb | ~0.5 MB |
 
 Exact sizes and SHA-256 digests are recorded in `goldens_meta.json` at
 freeze time; the gate script warns if the ONNX model differs.
