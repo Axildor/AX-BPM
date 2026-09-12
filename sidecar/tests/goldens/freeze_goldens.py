@@ -115,12 +115,14 @@ def download_models(model_dir: Path) -> dict:
     return meta
 
 
-def load_graph(path: Path) -> tuple:
+def load_graph(path: Path, batch: int) -> tuple:
     """Load a frozen TF graph. Returns (graph, tensor_names_by_trailing_dim).
 
-    Tensor selection is by SHAPE, not by name: we enumerate every op output
-    with a statically known shape and index them by trailing dim. TF names
-    like `PartitionedCall:1` may differ across exports.
+    Tensor selection is by SHAPE, not by name: we enumerate op outputs with
+    a statically known trailing dim, EXCLUDING constants/variables (a
+    [400,1280] dense-kernel transpose would otherwise shadow the real
+    [64,1280] output) and requiring the leading dim to match the batch for
+    rank-2 activations. The LAST candidate wins (graph outputs come last).
     """
     import tensorflow as tf
 
@@ -131,15 +133,23 @@ def load_graph(path: Path) -> tuple:
             od_graph_def.ParseFromString(f.read())
         tf.import_graph_def(od_graph_def, name="")
 
-    by_trailing: dict[int, str] = {}
+    skip_ops = {"Const", "ConstV2", "Variable", "VariableV2", "StatefulVariableOp",
+                "Placeholder", "PlaceholderWithDefault", "PlaceholderV2"}
+    candidates: dict[int, list[str]] = {}
     for op in graph.get_operations():
+        if op.type in skip_ops:
+            continue
         for out in op.outputs:
             shape = out.shape
-            if shape.rank is None or shape.rank < 2:
+            if shape.rank is None or shape.rank < 1:
                 continue
             dims = shape.as_list()
-            if dims and dims[-1] is not None and dims[-1] > 1:
-                by_trailing.setdefault(dims[-1], out.name)
+            if not dims or dims[-1] is None or dims[-1] <= 1:
+                continue
+            if shape.rank >= 2 and dims[0] is not None and dims[0] != batch:
+                continue
+            candidates.setdefault(dims[-1], []).append(out.name)
+    by_trailing = {d: names[-1] for d, names in candidates.items()}
     print(f"  {path.name}: tensors by trailing dim: {sorted(by_trailing)}")
     return graph, by_trailing
 
@@ -165,9 +175,9 @@ def main() -> None:
     model_meta = download_models(model_dir)
 
     # --- Load TF graphs (shape-indexed) -------------------------------------
-    effnet_graph, effnet_tensors = load_graph(model_dir / "discogs-effnet-bs64-1.pb")
-    mood_graph, mood_tensors = load_graph(model_dir / "mtg_jamendo_moodtheme-discogs-effnet-1.pb")
-    dance_graph, dance_tensors = load_graph(model_dir / "danceability-discogs-effnet-1.pb")
+    effnet_graph, effnet_tensors = load_graph(model_dir / "discogs-effnet-bs64-1.pb", BATCH_SIZE_EFFNET)
+    mood_graph, mood_tensors = load_graph(model_dir / "mtg_jamendo_moodtheme-discogs-effnet-1.pb", 1)
+    dance_graph, dance_tensors = load_graph(model_dir / "danceability-discogs-effnet-1.pb", 1)
 
     # --- Assumption guards (before heavy work) ------------------------------
     # 1. The front-end algorithm must exist.
@@ -229,7 +239,15 @@ def main() -> None:
     print(f"  effnet probe OK: emb {emb_probe.shape}, probs {prob_probe.shape}")
 
     # --- Front end (reference path: TensorflowInputMusiCNN) -----------------
+    # TensorflowInputMusiCNN accepts 512-sample FRAMES, not raw audio: the
+    # predict algorithms wire FrameCutter(frameSize=512, hopSize=256,
+    # startFromZero=false) -> TensorflowInputMusiCNN internally. We do the
+    # same via FrameGenerator.
     fe = es.TensorflowInputMusiCNN()
+
+    def logmel_frames(audio) -> np.ndarray:
+        gen = es.FrameGenerator(audio, frameSize=FRAME_SIZE, hopSize=HOP_SIZE, startFromZero=False)
+        return np.stack([fe(frame) for frame in gen]).astype(np.float32)
 
     # --- Per-clip processing -------------------------------------------------
     wavs = sorted(clips_dir.glob("*.wav"))
@@ -246,7 +264,7 @@ def main() -> None:
         print(f"processing {name}: {audio.shape[0]} samples")
 
         # log-mel frames (reference front end)
-        logmel = fe(audio)  # (n_frames, 96) float32
+        logmel = logmel_frames(audio)  # (n_frames, 96) float32
         print(f"  logmel frames: {logmel.shape}")
 
         # effnet patching: 128 frames, hop 62, repeat tail

@@ -34,6 +34,8 @@ from phase0_common import (
     DANCEABILITY_DIM,
     EMB_DIM,
     EFFNET_PATCH_SPEC,
+    FRAME_SIZE,
+    HOP_SIZE,
     MOODTHEME_DIM,
     NUMBER_BANDS,
     PATCH_SIZE_EFFNET,
@@ -128,7 +130,14 @@ def main() -> None:
     # front end for ONNX path: the reference component (TensorflowInputMusiCNN),
     # so this script isolates the MODEL-equivalence question from the
     # front-end question (that is composed_frontend.py's job).
+    # TensorflowInputMusiCNN accepts 512-sample FRAMES, not raw audio: the
+    # predict algorithms wire FrameCutter(512/256, startFromZero=false)
+    # -> TensorflowInputMusiCNN internally. We do the same via FrameGenerator.
     fe = es.TensorflowInputMusiCNN()
+
+    def logmel_frames(audio) -> np.ndarray:
+        gen = es.FrameGenerator(audio, frameSize=FRAME_SIZE, hopSize=HOP_SIZE, startFromZero=False)
+        return np.stack([fe(frame) for frame in gen]).astype(np.float32)
 
     results = {}
     pooled_by_clip: dict[str, np.ndarray] = {}
@@ -137,7 +146,7 @@ def main() -> None:
     for wav in sorted(Path(args.clips).glob("*.wav")):
         name = wav.stem
         audio = es.MonoLoader(filename=str(wav), sampleRate=SAMPLE_RATE)()
-        logmel = fe(audio)
+        logmel = logmel_frames(audio)
         patches = EFFNET_PATCH_SPEC.make_patches(logmel)  # (n, 128, 96)
         if patches.shape[0] < 1:
             print(f"FAIL {name}: no patches from {logmel.shape[0]} frames")
