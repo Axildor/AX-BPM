@@ -113,6 +113,9 @@ def composed_logmel(audio: np.ndarray) -> np.ndarray:
 
     out = []
     for frame in frames(audio):
+        # standard-mode algorithms expect VECTOR_REAL (Python list), not
+        # the numpy arrays FrameCutter yields.
+        frame = frame.tolist()
         spec = spectrum(window(frame))
         bands = mel(spec)
         out.append(compression_op(shift_op(bands)))

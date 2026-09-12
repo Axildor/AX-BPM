@@ -248,7 +248,9 @@ def main() -> None:
 
     def logmel_frames(audio) -> np.ndarray:
         gen = es.FrameGenerator(audio, frameSize=FRAME_SIZE, hopSize=HOP_SIZE, startFromZero=False)
-        return np.stack([fe(frame) for frame in gen]).astype(np.float32)
+        # standard-mode algorithms expect VECTOR_REAL (Python list), not
+        # the numpy arrays FrameGenerator yields.
+        return np.stack([fe(frame.tolist()) for frame in gen]).astype(np.float32)
 
     # --- Per-clip processing -------------------------------------------------
     wavs = sorted(clips_dir.glob("*.wav"))
