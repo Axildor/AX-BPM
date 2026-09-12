@@ -1,0 +1,29 @@
+# AX-BPM Sidecar add-on configuration.
+# Port 8099 is host-mapped BY DEFAULT: the dev probe name
+# ax-bpm-sidecar:8099 only resolves in compose; production relies on
+# homeassistant.local:8099 via the mapped port.
+name: AX-BPM Sidecar
+version: "1.0.0"
+slug: ax-bpm-sidecar
+description: Mood analyzer sidecar for the AX BPM integration (ONNX, no essentia)
+arch:
+  - amd64
+  - aarch64
+init: false
+startup: services
+boot: auto
+hassio_api: false
+homeassistant_api: false
+ports:
+  8099/tcp: 8099
+map:
+  - share:rw
+options:
+  api_token: ""
+  max_analyze_seconds: 60
+  intra_op_threads: 2
+schema:
+  api_token: str?
+  max_analyze_seconds: int(5,300)?
+  intra_op_threads: int(1,8)?
+image: ghcr.io/axildor/ax-bpm-{arch}-sidecar

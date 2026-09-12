@@ -48,7 +48,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     session = aiohttp.ClientSession()
     cache = BpmCache(hass)
     await cache.async_load()
-    pipeline = BpmPipeline(hass, session, cache, dict(entry.options))
+    # Options override data; merged view drives the dropdown + URL fields
+    # (legacy toggle entries migrate on the next options save).
+    pipeline = BpmPipeline(
+        hass, session, cache, {**entry.data, **entry.options}
+    )
     await pipeline.async_setup()
     _update_analyzer_issue(hass, entry)
 

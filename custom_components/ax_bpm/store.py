@@ -3,6 +3,10 @@
 Key: ISRC when previously matched, else a hash of the normalized
 "artist|title|duration bucket (±3s)". Survives restarts. A cache hit
 publishes immediately — no network calls, no analysis.
+
+Schema v2 (Phase 1): legacy Essentia SVM mood fields (mood_scores,
+mood_label) are dropped on load; BPM fields are kept. Sidecar mood
+results are cached per-ISRC alongside BPM under the same keys.
 """
 
 from __future__ import annotations
@@ -19,8 +23,11 @@ from .const import DURATION_TOLERANCE, SOURCE_CACHE
 
 _LOGGER = logging.getLogger(__name__)
 
-STORAGE_VERSION = 1
+STORAGE_VERSION = 2
 STORAGE_KEY = "ax_bpm_cache"
+
+# Legacy fields removed by the v1 → v2 migration.
+LEGACY_MOOD_FIELDS = ("mood_scores", "mood_label")
 
 
 def normalize(text: str | None) -> str:
@@ -34,7 +41,7 @@ def duration_bucket(duration: float | None) -> int:
     """Bucket duration to ±DURATION_TOLERANCE granularity (None → 0)."""
     if duration is None:
         return 0
-    return int(math.floor(duration / (2 * DURATION_TOLERANCE)))
+    return math.floor(duration / (2 * DURATION_TOLERANCE))
 
 
 def cache_key(
@@ -59,7 +66,23 @@ class BpmCache:
 
     async def async_load(self) -> None:
         data = await self._store.async_load()
-        self._data = dict(data) if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            self._data = {}
+            return
+        # v1 → v2 migration: drop legacy SVM mood fields, keep BPM.
+        migrated = False
+        for entry in data.values():
+            if not isinstance(entry, dict):
+                continue
+            for field in LEGACY_MOOD_FIELDS:
+                if field in entry:
+                    entry.pop(field, None)
+                    migrated = True
+        if migrated:
+            _LOGGER.info(
+                "AX BPM cache: migrated v1 → v2 (legacy SVM mood fields dropped)"
+            )
+        self._data = dict(data)
 
     def get(self, key: str) -> dict[str, Any] | None:
         entry = self._data.get(key)

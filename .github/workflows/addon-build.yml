@@ -1,0 +1,28 @@
+# Add-on build: amd64 + aarch64 via hassio addon-builder.
+name: addon-build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "addon/**"
+      - "sidecar/**"
+      - "repository.json"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ${{ matrix.arch }}
+        uses: home-assistant/builder@2024.08.3
+        with:
+          args: |
+            --all \
+            --arch ${{ matrix.arch }} \
+            --system \
+            /data

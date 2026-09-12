@@ -10,8 +10,8 @@ Signals:
 - intensity  I = (S_aggressive + S_party + S_electronic + genre_fast) / 4
 - calmness   C = (S_relaxed + S_acoustic + genre_slow) / 3
 
-Mood scores S_x are continuous values in [0, 1] from Essentia SVM
-classifiers (uncalibrated scores, not probabilities).
+Mood scores S_x are continuous values in [0, 1] from the sidecar mood
+analyzer's tag scores (Phase 1: previously Essentia SVM classifiers).
 
 Graceful degradation: when mood scores are unavailable (None), the mood
 terms are dropped and genre alone decides (thresholds unchanged). When
@@ -20,7 +20,7 @@ both mood and genre are unavailable, the raw estimate is published.
 
 from __future__ import annotations
 
-from typing import Mapping
+from collections.abc import Mapping
 
 from .const import (
     FAST_GENRES,

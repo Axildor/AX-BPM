@@ -45,3 +45,8 @@ config/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Crash dumps (from the Phase 2 segfault debug journey)
+core
+core.*
+!.core.keep

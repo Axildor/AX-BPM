@@ -1,0 +1,75 @@
+# Tier 3 — AUTHORITATIVE sidecar golden validation (glibc).
+# Mirrors the phase0 job: ubuntu-latest, Python 3.12, pinned requirements.
+# HARD asserts: onnxruntime importable, AXBPM_REQUIRE_ONNX=1, ZERO skips
+# in the golden test files (any skip = job failure).
+# Model cache keyed on the model-pin manifest hash; weights NEVER committed.
+#
+# System deps: the golden-test conftest resamples via ctypes on the system
+# libsamplerate (essentia MonoLoader replication) — ubuntu-latest does not
+# ship it, so it is installed explicitly below.
+name: sidecar-golden-validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sidecar/**"
+      - "tests/**"
+      - ".github/workflows/sidecar-golden-validation.yml"
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: "Debug mode (logs, no gate enforcement)"
+        type: boolean
+        default: false
+
+jobs:
+  golden-validation:
+    runs-on: ubuntu-latest
+    env:
+      AXBPM_REQUIRE_ONNX: "1"
+      AXBPM_CI_MODEL_DIR: ${{ github.workspace }}/.axbpm-models
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache model weights
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: .axbpm-models
+          key: axbpm-models-${{ hashFiles('sidecar/ax_bpm_sidecar/config.py') }}
+
+      - name: Install system deps (libsamplerate for the golden resampler)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsamplerate0
+
+      - name: Install pinned dependencies
+        run: pip install -r sidecar/requirements-dev.txt
+
+      - name: HARD assert — onnxruntime importable
+        run: python -c "import onnxruntime; print('onnxruntime', onnxruntime.__version__)"
+
+      - name: HARD assert — AXBPM_REQUIRE_ONNX set
+        run: |
+          if [ "$AXBPM_REQUIRE_ONNX" != "1" ]; then
+            echo "AXBPM_REQUIRE_ONNX must be 1"; exit 1
+          fi
+
+      - name: Run sidecar test suite (zero skips in golden files)
+        run: |
+          set -o pipefail
+          pytest sidecar/tests -ra -v 2>&1 | tee pytest-sidecar.log
+          # Zero-skip guard: the golden files must have NO skipped tests.
+          if grep -E "test_frontend_goldens|test_inference_goldens" pytest-sidecar.log | grep -q "SKIPPED"; then
+            echo "FATAL: skipped tests in golden files — vacuous pass"; exit 1
+          fi
+
+      - name: Run integration test suite
+        run: pytest tests -ra -q
+
+      - name: Summary
+        if: always()
+        run: tail -20 pytest-sidecar.log || true

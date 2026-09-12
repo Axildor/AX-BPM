@@ -1,7 +1,7 @@
 """Per-track BPM resolution pipeline.
 
 Order: cache lookup → anonymous Deezer match (metadata bpm) → local
-analysis (aubio tempo + Essentia mood) → octave disambiguation → publish.
+analysis (aubio tempo + sidecar mood) → octave disambiguation → publish.
 
 Invariants:
 - Single-flight per track (no duplicate lookups).
@@ -11,6 +11,16 @@ Invariants:
 - Mood correction only ever fires on the locally analyzed aubio estimate,
   never on Deezer metadata bpm.
 - Graceful degradation: mood+genre → genre-only → raw.
+- Mood-enabled cache miss downloads the 30 s preview ONCE (regardless of
+  Deezer bpm) and reuses the same buffer for the local BPM fallback AND
+  the sidecar call; discarded after.
+- Local path (bpm == 0): the sidecar call runs CONCURRENTLY with aubio,
+  bounded by min(remaining budget, MOOD_TIMEOUT), so the first publish is
+  already mood-corrected (user-approved deviation from the parent plan's
+  "mood never delays the publish" invariant — no BPM flip-flop).
+- Deezer path (bpm > 0): publish immediately; mood enrichment is a
+  separate post-publish step (async_enrich) the sensor triggers — mood
+  never delays this publish (and cannot change the BPM anyway).
 """
 
 from __future__ import annotations
@@ -20,25 +30,32 @@ import logging
 import os
 import tempfile
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from . import math as bpm_math
 from .analyzer import AubioAnalyzer
 from .const import (
     ANALYSIS_TIMEOUT,
-    CONF_GENRE_CORRECTION,
-    CONF_MOOD_CORRECTION,
+    CONF_MOOD_ANALYZER_URL,
+    CONF_MOOD_API_TOKEN,
+    CONF_OCTAVE_DISAMBIGUATION,
+    EXPECTED_MOOD_SCORES,
+    OCTAVE_GENRE_MOOD,
+    OCTAVE_OFF,
     OVERALL_BUDGET,
     SOURCE_AUBIO,
     SOURCE_DEEZER,
-    SOURCE_ESSENTIA,
     SOURCE_NUMPY,
 )
 from .deezer import DeezerClient, parse_artist_title
-from .mood import MoodAnalyzer
+from .mood_client import MoodClient
 from .store import BpmCache, cache_key
 
 _LOGGER = logging.getLogger(__name__)
+
+# Legacy cache fields dropped by the v1 → v2 migration (Essentia SVM era).
+LEGACY_MOOD_FIELDS = ("mood_scores", "mood_label")
 
 
 class ResolutionResult:
@@ -64,24 +81,35 @@ class BpmPipeline:
         self._deezer = DeezerClient(session)
         self._cache = cache
         self._aubio = AubioAnalyzer(options.get("aubio_binary"))
-        self._mood = MoodAnalyzer(
-            os.path.join(hass.config.path("storage"), "ax_bpm", "models")
+        self._mood = MoodClient(
+            session,
+            options.get(CONF_MOOD_ANALYZER_URL),
+            options.get(CONF_MOOD_API_TOKEN),
         )
-        self._genre_correction = options.get(CONF_GENRE_CORRECTION, True)
-        self._mood_correction = options.get(CONF_MOOD_CORRECTION, True)
+        self._octave_mode = options.get(CONF_OCTAVE_DISAMBIGUATION, "genre_only")
         self._mood_ready = False
         self._lock = asyncio.Lock()
         self._current_token: str | None = None
 
     async def async_setup(self) -> None:
-        """Probe Essentia availability (never blocks the sensor)."""
-        if self._mood_correction:
-            self._mood_ready = await self._mood.async_setup()
+        """Probe sidecar availability (never blocks the sensor)."""
+        if self._octave_mode == OCTAVE_GENRE_MOOD:
+            self._mood_ready = await self._mood.async_detect() is not None
             if not self._mood_ready:
-                _LOGGER.warning(
-                    "Essentia unavailable — falling back to genre-only "
-                    "octave disambiguation"
+                _LOGGER.info(
+                    "Sidecar mood analyzer not detected — falling back to "
+                    "genre-only octave disambiguation"
                 )
+
+    @property
+    def mood_client(self) -> MoodClient:
+        """Expose the mood client (sensor post-publish enrichment)."""
+        return self._mood
+
+    @property
+    def mood_enabled(self) -> bool:
+        """True when the dropdown selects Genre + mood."""
+        return self._octave_mode == OCTAVE_GENRE_MOOD
 
     async def async_resolve(
         self,
@@ -103,6 +131,108 @@ class BpmPipeline:
             return await self._resolve_inner(
                 track_artist, track_title, duration, token
             )
+
+    async def async_enrich(
+        self,
+        artist: str,
+        title: str,
+        duration: float | None,
+        result: ResolutionResult,
+    ) -> dict[str, Any] | None:
+        """Post-publish mood enrichment (Deezer-metadata path only).
+
+        Downloads the preview once, POSTs it to the sidecar, caches the
+        mood payload per-ISRC alongside the BPM, and returns the mood
+        attribute dict for the sensor's second state write. Returns None
+        on any failure — never raises, never retries.
+        """
+        if not self.mood_enabled or not self._mood_ready:
+            return None
+        if result.source != SOURCE_DEEZER:
+            return None  # local path already carries mood attrs
+
+        try:
+            preview = await self._deezer.download_preview_bytes(
+                artist, title, duration
+            )
+        except Exception:
+            _LOGGER.debug("Mood enrichment preview download failed", exc_info=True)
+            return None
+        if not preview:
+            return None
+
+        payload = await self._mood.async_analyze(preview)
+        if not payload:
+            return None
+
+        mood_attrs = self._mood_attrs_from_payload(payload)
+        # Cache mood alongside the BPM (per-ISRC when known).
+        key = cache_key(result.attrs.get("isrc"), artist, title, duration)
+        cached = self._cache.get(key) or {}
+        await self._cache.async_put(
+            key, {**cached, "bpm": result.bpm, **result.attrs, **mood_attrs}
+        )
+        return mood_attrs
+
+    @staticmethod
+    def _scores_from_tags(payload: dict[str, Any] | None) -> dict[str, float] | None:
+        """Derive the five-signal mapping from sidecar mood tags."""
+        if not payload:
+            return None
+        tags = payload.get("mood_tags") or []
+        scores = {
+            t.get("tag"): float(t.get("score", 0.0))
+            for t in tags
+            if isinstance(t, dict) and t.get("tag")
+        }
+        return scores or None
+
+    @classmethod
+    def _mood_attrs_from_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        """Map a sidecar /analyze payload to sensor mood attributes.
+
+        mood_scores is ATOMIC (Catch 1): consumed only when present AND
+        complete over EXPECTED_MOOD_SCORES. A missing key read as 0.0
+        would mean "maximally non-X" and bias octave gating toward
+        intensity during partial failure — incomplete → genre-only
+        fallback (the designed degradation path), never 0.0 substitution.
+        """
+        attrs: dict[str, Any] = {
+            "mood_tags": payload.get("mood_tags") or [],
+            "valence": payload.get("valence"),
+            "arousal": payload.get("arousal"),
+            "valence_std": payload.get("valence_std"),
+            "arousal_std": payload.get("arousal_std"),
+            "danceability": payload.get("danceability"),
+            "analyzed_seconds": payload.get("analyzed_seconds"),
+            "model_versions": payload.get("model_versions"),
+            "source": "sidecar",
+        }
+        # Explicit five-signal dict from the dedicated mood heads — the
+        # sidecar emits it only when ALL five heads are healthy.
+        scores = payload.get("mood_scores")
+        if not (
+            isinstance(scores, dict)
+            and EXPECTED_MOOD_SCORES.issubset(scores)
+        ):
+            scores = None
+        if scores:
+            intensity = (
+                float(scores["aggressive"])
+                + float(scores["party"])
+                + float(scores["electronic"])
+            ) / 3.0
+            calmness = (
+                float(scores["relaxed"]) + float(scores["acoustic"])
+            ) / 2.0
+            arousal = payload.get("arousal")
+            if arousal is not None and abs(intensity - calmness) < 0.05:
+                intensity = max(intensity, float(arousal))
+                calmness = min(calmness, 1.0 - float(arousal))
+            attrs["intensity"] = round(intensity, 3)
+            attrs["calmness"] = round(calmness, 3)
+            attrs["mood_scores"] = scores
+        return attrs
 
     async def _resolve_inner(
         self,
@@ -126,14 +256,16 @@ class BpmPipeline:
                 **{k: v for k, v in cached.items() if k != "bpm"},
             })
 
-        # 2. Anonymous Deezer match.
+        # 2. Anonymous Deezer match. Returns (result, pending_match) where
+        # pending_match is the bpm==0 match metadata for the local path —
+        # strictly per-resolution, never stored on the instance.
         try:
-            result = await asyncio.wait_for(
+            result, match = await asyncio.wait_for(
                 self._resolve_deezer(artist, title, duration, key),
                 timeout=max(0.1, deadline - time.monotonic()),
             )
         except asyncio.TimeoutError:
-            result = None
+            result, match = None, None
         if result is not None:
             _LOGGER.info(
                 "AX BPM: %s - %s → %.1f BPM (source: %s)",
@@ -148,9 +280,13 @@ class BpmPipeline:
             return None
 
         # 3. Local analysis fallback (Deezer bpm == 0 or no confident match).
+        # Only runs when THIS resolution produced a bpm==0 match; a failed
+        # Deezer lookup must never reuse a previous track's match data.
         try:
             result = await asyncio.wait_for(
-                self._resolve_local(artist, title, duration, key, deadline),
+                self._resolve_local(
+                    artist, title, duration, key, deadline, match
+                ),
                 timeout=max(0.1, deadline - time.monotonic()),
             )
         except asyncio.TimeoutError:
@@ -174,14 +310,21 @@ class BpmPipeline:
         title: str,
         duration: float | None,
         key: str,
-    ) -> ResolutionResult | None:
+    ) -> tuple[ResolutionResult | None, dict | None]:
+        """Resolve via Deezer metadata.
+
+        Returns (result, pending_match): result is the published resolution
+        when Deezer reports a bpm; pending_match carries isrc/genres/preview
+        for the local-analysis path when bpm == 0. Both are None on any
+        failure — callers must never fall back to stale match data.
+        """
         match = await self._deezer.find_match(artist, title, duration)
         if not match or not match.get("id"):
-            return None
+            return None, None
 
         track = await self._deezer.get_track(match["id"])
         if not track:
-            return None
+            return None, None
 
         deezer_bpm = track.get("bpm") or 0.0
         isrc = track.get("isrc")
@@ -219,18 +362,19 @@ class BpmPipeline:
                 cache_key(isrc, artist, title, duration),
                 {"bpm": result.bpm, **result.attrs},
             )
-            return result
+            return result, None
 
-        # bpm == 0 → remember isrc/genres for the local path via cache entry
-        # metadata, but do not publish anything yet.
-        self._last_match = {
+        # bpm == 0 → hand isrc/genres/preview to the local path for THIS
+        # resolution only. Never stored on the instance: a later failed
+        # lookup must not inherit a previous track's match data.
+        pending = {
             "isrc": isrc,
             "deezer_track_id": match["id"],
             "match_rank": match.get("rank"),
             "genres": genres,
             "preview_url": track.get("preview"),
         }
-        return None
+        return None, pending
 
     async def _resolve_local(
         self,
@@ -239,25 +383,34 @@ class BpmPipeline:
         duration: float | None,
         key: str,
         deadline: float,
+        match: dict | None,
     ) -> ResolutionResult | None:
-        match = getattr(self, "_last_match", None) or {}
+        match = match or {}
         preview_url = match.get("preview_url")
         if not preview_url:
             return None
 
         # Download the preview once — use immediately, never cache the URL.
-        fd, tmp_path = tempfile.mkstemp(suffix=".mp3", prefix="ax_bpm_")
+        # mkstemp does filesystem I/O — keep it off the event loop.
+        loop = asyncio.get_running_loop()
+        fd, tmp_path = await loop.run_in_executor(
+            None,
+            lambda: tempfile.mkstemp(suffix=".mp3", prefix="ax_bpm_"),
+        )
         os.close(fd)
         try:
             if not await self._deezer.download_preview(preview_url, tmp_path):
                 return None
 
-            # Run BOTH analyzers concurrently on the one preview.
+            # Run the tempo analyzer and (when enabled) the sidecar mood
+            # call CONCURRENTLY on the one preview. The sidecar timeout is
+            # bounded by the remaining budget so the first publish is
+            # already mood-corrected; a slow sidecar degrades to genre-only.
             bpm_task = asyncio.ensure_future(self._aubio.get_bpm(self._hass, tmp_path))
             mood_task = None
-            if self._mood_correction and self._mood_ready:
+            if self.mood_enabled and self._mood_ready:
                 mood_task = asyncio.ensure_future(
-                    self._mood.get_scores(tmp_path)
+                    self._mood.async_analyze_file(tmp_path)
                 )
             remaining = max(0.1, deadline - time.monotonic())
             done, pending = await asyncio.wait(
@@ -271,14 +424,17 @@ class BpmPipeline:
             if not bpm_raw or bpm_raw <= 0:
                 return None
 
-            mood_scores = (
-                mood_task.result() if mood_task in done and not mood_task.cancelled() else None
+            mood_payload = (
+                mood_task.result()
+                if mood_task in done and not mood_task.cancelled()
+                else None
             )
-            if not self._mood_correction:
-                mood_scores = None
+            mood_scores = (
+                mood_payload.get("mood_scores") if mood_payload else None
+            ) or self._scores_from_tags(mood_payload)
 
             genres = match.get("genres") or []
-            if not self._genre_correction:
+            if self._octave_mode == OCTAVE_OFF:
                 genres = []
 
             # Octave disambiguation — only on the local tempo estimate.
@@ -293,7 +449,6 @@ class BpmPipeline:
             source = {
                 "aubio": SOURCE_AUBIO,
                 "aubio_cli": SOURCE_AUBIO,
-                "essentia": SOURCE_ESSENTIA,
                 "numpy": SOURCE_NUMPY,
             }.get(backend, SOURCE_AUBIO)
             result = ResolutionResult(
@@ -324,7 +479,6 @@ class BpmPipeline:
                 os.unlink(tmp_path)
             except OSError:
                 pass
-
 
 def make_result_from_cache(cached: dict[str, Any]) -> ResolutionResult:
     """Rebuild a ResolutionResult from a cache entry."""

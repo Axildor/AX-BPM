@@ -8,8 +8,6 @@ import wave
 from pathlib import Path
 
 import numpy as np
-import pytest
-
 from ax_bpm.analyzer import AubioAnalyzer, aubio_available
 from ax_bpm.decode import decode_available, decode_mono
 from ax_bpm.tempo_numpy import estimate_bpm
@@ -67,7 +65,7 @@ class TestEstimateBpm:
             samples = click / np.max(np.abs(click))
             result = estimate_bpm(samples, SR)
             assert result is not None
-            bpm, confidence = result
+            bpm, _confidence = result
             # Accept exact, half, or double — octave errors are corrected
             # downstream by math.apply_octave_disambiguation.
             ratios = {
@@ -136,7 +134,7 @@ class TestAnalyzerChain:
             bpm = analyzer._analyze_sync(mp3)
             assert bpm is not None
             assert 120 <= bpm <= 140
-            assert analyzer.last_backend in {"aubio", "aubio_cli", "essentia", "numpy"}
+            assert analyzer.last_backend in {"aubio", "aubio_cli", "numpy"}
         finally:
             Path(wav).unlink(missing_ok=True)
         Path(mp3).unlink(missing_ok=True)

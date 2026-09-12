@@ -27,7 +27,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-
 from phase0_common import (
     BANDS_TYPE,
     COMPRESSION,

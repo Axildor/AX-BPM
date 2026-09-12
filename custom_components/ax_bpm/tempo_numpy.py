@@ -6,8 +6,8 @@ prominence of the winning autocorrelation peak relative to the runner-up.
 
 This is deliberately simple: its dominant failure mode (octave errors) is
 exactly what the octave-disambiguation stage in math.py corrects. It exists
-so local BPM analysis works out-of-the-box on installs where neither aubio
-nor Essentia can be installed (HA OS / HA Container, musl, no compiler).
+so local BPM analysis works out-of-the-box on installs where the aubio
+package cannot be installed (HA OS / HA Container, musl, no compiler).
 
 Executor only — never call from the event loop.
 """
@@ -128,7 +128,7 @@ def estimate_bpm(samples: np.ndarray, sample_rate: int = SAMPLE_RATE) -> tuple[f
     # (half or double the winning lag).
     competitor = 0.0
     for factor in (0.5, 2.0):
-        comp_idx = int(round(best_idx * factor))
+        comp_idx = round(best_idx * factor)
         lo, hi = comp_idx - max(1, comp_idx // 20), comp_idx + max(1, comp_idx // 20)
         lo = max(lo, min_lag)
         hi = min(hi, max_lag)

@@ -12,9 +12,18 @@ NAME = "AX BPM"
 # Configuration keys (config flow + options flow)
 # ---------------------------------------------------------------------------
 CONF_MEDIA_PLAYER = "media_player"
-CONF_GENRE_CORRECTION = "genre_correction"
-CONF_MOOD_CORRECTION = "mood_correction"
 CONF_AUBIO_BINARY = "aubio_binary"
+
+# Octave disambiguation mode (single dropdown, replaces the legacy
+# genre_correction / mood_correction toggle pair).
+CONF_OCTAVE_DISAMBIGUATION = "octave_disambiguation"
+OCTAVE_OFF = "off"
+OCTAVE_GENRE_ONLY = "genre_only"
+OCTAVE_GENRE_MOOD = "genre_mood"
+OCTAVE_MODES = [OCTAVE_OFF, OCTAVE_GENRE_ONLY, OCTAVE_GENRE_MOOD]
+
+# Manual sidecar URL override (empty = auto-detect only).
+CONF_MOOD_ANALYZER_URL = "mood_analyzer_url"
 
 # ---------------------------------------------------------------------------
 # Octave disambiguation — core tunables (see math.py for the decision order)
@@ -46,7 +55,11 @@ SLOW_GENRES = frozenset({
 # Timeouts / budgets (seconds)
 # ---------------------------------------------------------------------------
 NETWORK_TIMEOUT = 10.0        # per Deezer HTTP request
-ANALYSIS_TIMEOUT = 15.0       # per analyzer (aubio / essentia)
+ANALYSIS_TIMEOUT = 15.0       # per analyzer (aubio)
+# Per sidecar mood request (hard, single attempt). 25 s: aarch64 inference
+# can exceed 8 s; mood is fully async post-publish on the Deezer path, and
+# the local path stays bounded by OVERALL_BUDGET.
+MOOD_TIMEOUT = 25.0
 OVERALL_BUDGET = 25.0         # whole per-track resolution budget
 
 # Track-change debounce: wait this long after playback starts / track changes
@@ -70,22 +83,33 @@ PLATFORMS = ["sensor"]
 UNIT_BPM = "BPM"
 SOURCE_DEEZER = "deezer_metadata"
 SOURCE_AUBIO = "aubio"
-SOURCE_ESSENTIA = "essentia"
 SOURCE_NUMPY = "numpy"
 SOURCE_CACHE = "cache"
+SOURCE_SIDECAR = "sidecar"
 
-# Essentia SVM mood classifiers used (five S_x signals).
-MOOD_KEYS = ("aggressive", "party", "electronic", "relaxed", "acoustic")
+# Sidecar mood analyzer (Phase 2 add-on) endpoints.
+# Auto-detect order: add-on internal hostname → homeassistant.local →
+# manual mood_analyzer_url override. Empty manual URL = feature off.
+SIDECAR_PORT = 8099
+SIDECAR_URLS = (
+    f"http://ax-bpm-sidecar:{SIDECAR_PORT}",   # add-on internal hostname
+    f"http://homeassistant.local:{SIDECAR_PORT}",  # external sidecar mode
+)
+SIDECAR_ANALYZE_PATH = "/analyze"
+SIDECAR_HEALTH_PATH = "/health"
 
-# Essentia SVM model file names (Gaia .history format, CC BY-NC-ND licensed).
-ESSENTIA_MODEL_BASE_URL = "https://essentia.upf.edu/models/svm-models/mood"
-ESSENTIA_MODELS = {
-    "aggressive": "mood_aggressive.history",
-    "party": "mood_party.history",
-    "electronic": "mood_electronic.history",
-    "relaxed": "mood_relaxed.history",
-    "acoustic": "mood_acoustic.history",
-}
+# Shared-secret auth for the sidecar /analyze endpoint (Bearer token).
+# Set the same token in the add-on config and here; empty = no token sent
+# (the sidecar answers 401 when its own token is set).
+CONF_MOOD_API_TOKEN = "mood_api_token"
+
+# The five gating signals. mood_scores from the sidecar is ATOMIC over
+# exactly this set: consumed only when present AND complete — a missing
+# key read as 0.0 would mean "maximally non-X" and bias octave gating
+# toward intensity during partial failure. Incomplete → genre-only.
+EXPECTED_MOOD_SCORES = frozenset({
+    "aggressive", "party", "relaxed", "electronic", "acoustic",
+})
 
 # Deezer endpoints (anonymous, no key required for public read endpoints).
 DEEZER_API = "https://api.deezer.com"

@@ -3,21 +3,20 @@
 Chain (first success wins):
 1. aubio Python package (executor) — best classic accuracy
 2. External `aubio` CLI binary (config option `aubio_binary`)
-3. Essentia RhythmExtractor2013 (if the essentia wheel is installed)
-4. Pure-Python NumPy estimator (tempo_numpy) — always available floor
+3. Pure-Python NumPy estimator (tempo_numpy) — always available floor
 
 Decoding to PCM is handled by decode.py (miniaudio → soundfile → ffmpeg);
-aubio and Essentia decode files themselves, so the decode chain only backs
-the NumPy floor.
+aubio decodes files itself, so the decode chain only backs the NumPy floor.
 
 BPM convention: 60 / median(inter-beat interval) for beat-based analyzers;
-direct tempo output for Essentia/NumPy. A missing analyzer must never delay
+direct tempo output for NumPy. A missing analyzer must never delay
 or block the sensor: callers get None.
 """
 
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 import statistics
 
@@ -32,12 +31,12 @@ def aubio_available(binary: str | None = None) -> bool:
     """True when local tempo analysis can run at all.
 
     With the NumPy floor, analysis is available whenever any decoder is
-    available; aubio/Essentia are optional accuracy upgrades.
+    available; aubio is an optional accuracy upgrade.
     """
     if decode_available():
         return True
     try:
-        import aubio  # noqa: F401, PLC0415
+        import aubio  # noqa: F401
 
         return True
     except ImportError:
@@ -47,7 +46,7 @@ def aubio_available(binary: str | None = None) -> bool:
 def _analyze_with_package(path: str) -> float | None:
     """In-process aubio tempo detection (executor only)."""
     try:
-        import aubio  # noqa: PLC0415
+        import aubio
     except ImportError:
         return None
 
@@ -70,13 +69,13 @@ def _analyze_with_package(path: str) -> float | None:
             total_frames += read
             if read < hop_s:
                 break
-    except Exception as err:  # aubio raises on malformed files
+    except Exception as err:  # noqa: BLE001 — aubio raises on malformed files
         _LOGGER.debug("aubio package analysis failed for %s: %s", path, err)
         return None
 
     if len(beats) < 2:
         return None
-    intervals = [b - a for a, b in zip(beats, beats[1:])]
+    intervals = [b - a for a, b in itertools.pairwise(beats)]
     median_ibi = statistics.median(intervals)
     if median_ibi <= 0:
         return None
@@ -86,7 +85,7 @@ def _analyze_with_package(path: str) -> float | None:
 def _analyze_with_cli(binary: str, path: str) -> float | None:
     """External `aubio tempo` CLI: parse beat timestamps from stdout."""
     try:
-        import subprocess  # noqa: PLC0415
+        import subprocess
 
         proc = subprocess.run(
             [binary, "beat", path],
@@ -110,32 +109,11 @@ def _analyze_with_cli(binary: str, path: str) -> float | None:
             continue
     if len(beats) < 2:
         return None
-    intervals = [b - a for a, b in zip(beats, beats[1:])]
+    intervals = [b - a for a, b in itertools.pairwise(beats)]
     median_ibi = statistics.median(intervals)
     if median_ibi <= 0:
         return None
     return 60.0 / median_ibi
-
-
-def _analyze_with_essentia(path: str) -> float | None:
-    """Essentia RhythmExtractor2013 tempo (executor only)."""
-    try:
-        import essentia.standard as es  # noqa: PLC0415
-    except ImportError:
-        return None
-    try:
-        audio = es.MonoLoader(filename=path, sampleRate=22050)()
-        if audio.size == 0:
-            return None
-        extractor = es.RhythmExtractor2013(method="multifeature")
-        bpm, _beats, _confidence, _ext, _intervals = extractor(audio)
-        bpm = float(bpm)
-        if bpm <= 0:
-            return None
-        return bpm
-    except Exception as err:  # noqa: BLE001 — any failure falls through
-        _LOGGER.debug("essentia tempo failed for %s: %s", path, err)
-        return None
 
 
 def _analyze_with_numpy(path: str) -> float | None:
@@ -155,7 +133,7 @@ def _analyze_with_numpy(path: str) -> float | None:
 
 
 class AubioAnalyzer:
-    """Tempo analyzer with a pluggable chain: aubio → CLI → essentia → numpy."""
+    """Tempo analyzer with a pluggable chain: aubio → CLI → numpy."""
 
     def __init__(self, aubio_binary: str | None = None) -> None:
         self._binary = aubio_binary or None
@@ -167,23 +145,16 @@ class AubioAnalyzer:
             return
         self._availability_logged = True
         try:
-            import aubio  # noqa: F401, PLC0415
+            import aubio  # noqa: F401
 
             _LOGGER.info("AX BPM: aubio package available (local tempo analysis active)")
-            return
-        except ImportError:
-            pass
-        try:
-            import essentia  # noqa: F401, PLC0415
-
-            _LOGGER.info("AX BPM: essentia available (local tempo analysis active)")
             return
         except ImportError:
             pass
         if decode_available():
             _LOGGER.info(
                 "AX BPM: using built-in NumPy tempo estimator (install the "
-                "'aubio' or 'essentia' package for higher accuracy)"
+                "'aubio' package for higher accuracy)"
             )
         elif self._binary:
             _LOGGER.info(
@@ -213,7 +184,6 @@ class AubioAnalyzer:
         for name, analyzer in (
             ("aubio", _analyze_with_package),
             ("aubio_cli", lambda p: _analyze_with_cli(self._binary, p) if self._binary else None),
-            ("essentia", _analyze_with_essentia),
             ("numpy", _analyze_with_numpy),
         ):
             bpm = analyzer(path)

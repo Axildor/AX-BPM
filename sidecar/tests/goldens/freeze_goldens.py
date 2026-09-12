@@ -37,14 +37,13 @@ import urllib.request
 from pathlib import Path
 
 import numpy as np
-
 from phase0_common import (
-    BATCH_SIZE_EFFNET,
     BANDS_TYPE,
+    BATCH_SIZE_EFFNET,
     COMPRESSION,
     DANCEABILITY_DIM,
-    EMB_DIM,
     EFFNET_PATCH_SPEC,
+    EMB_DIM,
     FRAME_SIZE,
     HIGH_FREQUENCY_BOUND,
     HOP_SIZE,
@@ -108,7 +107,7 @@ def download_models(model_dir: Path) -> dict:
         dest = model_dir / fname
         if not dest.exists():
             print(f"downloading {url}")
-            urllib.request.urlretrieve(url, dest)  # noqa: S310
+            urllib.request.urlretrieve(url, dest)
         size = dest.stat().st_size
         digest = sha256_file(dest)
         print(f"  {fname}: {size} bytes sha256={digest[:16]}...")

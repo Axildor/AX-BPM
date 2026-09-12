@@ -14,13 +14,9 @@ Covers every acceptance case from the spec:
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
-
-from ax_bpm.const import HIGH_WINDOW, LOW_WINDOW  # noqa: E402
-from ax_bpm.math import (  # noqa: E402
+from ax_bpm.const import HIGH_WINDOW, LOW_WINDOW
+from ax_bpm.math import (
     RULE_GENRE_DOUBLE,
     RULE_GENRE_HALF,
     RULE_MOOD_DOUBLE,
@@ -30,7 +26,6 @@ from ax_bpm.math import (  # noqa: E402
     compute_signals,
     genre_flags,
 )
-
 
 # ---------------------------------------------------------------------------
 # Spec acceptance cases
@@ -177,7 +172,7 @@ def test_both_unavailable_publishes_raw():
 
 def test_genre_only_uses_flags_as_signals():
     """Genre-only mode maps flags directly onto I/C (thresholds unchanged)."""
-    intensity, calmness, genre_fast, genre_slow = compute_signals(
+    intensity, calmness, genre_fast, _genre_slow = compute_signals(
         None, ["Drum & Bass"]
     )
     assert genre_fast == 1

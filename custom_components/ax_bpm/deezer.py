@@ -9,9 +9,9 @@ cache the URL itself.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
-import urllib.parse
 
 import aiohttp
 
@@ -29,6 +29,12 @@ _TITLE_NOISE = re.compile(
     re.IGNORECASE,
 )
 _FEAT_TAIL = re.compile(r"\s+(?:feat\.?|ft\.?|featuring)\s+.*$", re.IGNORECASE)
+
+
+def _write_file(dest_path: str, data: bytes) -> None:
+    """Blocking file write — must run in an executor, never on the loop."""
+    with open(dest_path, "wb") as fh:
+        fh.write(data)
 
 
 def _norm(text: str | None) -> str:
@@ -173,10 +179,46 @@ class DeezerClient:
             if g.get("name")
         ]
 
+    async def download_preview_bytes(self, artist: str, title: str, duration: float | None) -> bytes | None:
+        """Resolve a track and download its preview as raw bytes.
+
+        Used by the post-publish mood enrichment path (Deezer-metadata
+        BPM already published; the sidecar needs the audio). Returns None
+        on any failure. The URL is never cached.
+        """
+        match = await self.find_match(artist, title, duration)
+        if not match or not match.get("id"):
+            return None
+        track = await self.get_track(match["id"])
+        if not track:
+            return None
+        preview_url = track.get("preview")
+        if not preview_url:
+            return None
+        try:
+            async with self._session.get(
+                preview_url,
+                headers=_HEADERS,
+                timeout=aiohttp.ClientTimeout(total=NETWORK_TIMEOUT),
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                buf = bytearray()
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    buf.extend(chunk)
+                return bytes(buf)
+        except (aiohttp.ClientError, TimeoutError) as err:
+            _LOGGER.debug("AX BPM: preview bytes download failed: %s", err)
+            return None
+
     async def download_preview(self, preview_url: str, dest_path: str) -> bool:
         """Download the ~30s preview MP3 to dest_path. Use immediately.
 
         Returns True on success. The URL is never cached by callers.
+
+        Chunks are buffered in memory (previews are ~500 KB) and written in
+        one executor call — synchronous open()/write() inside the event loop
+        triggers HA's blocking-call watchdog.
         """
         try:
             async with self._session.get(
@@ -189,9 +231,11 @@ class DeezerClient:
                         "AX BPM: preview download failed (HTTP %s)", resp.status
                     )
                     return False
-                with open(dest_path, "wb") as fh:
-                    async for chunk in resp.content.iter_chunked(64 * 1024):
-                        fh.write(chunk)
+                buf = bytearray()
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    buf.extend(chunk)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, _write_file, dest_path, bytes(buf))
             _LOGGER.debug("AX BPM: preview downloaded to %s", dest_path)
             return True
         except (aiohttp.ClientError, TimeoutError, OSError) as err:

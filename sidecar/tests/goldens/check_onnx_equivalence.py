@@ -29,21 +29,17 @@ import urllib.request
 from pathlib import Path
 
 import numpy as np
-
 from phase0_common import (
     DANCEABILITY_DIM,
-    EMB_DIM,
     EFFNET_PATCH_SPEC,
+    EMB_DIM,
     FRAME_SIZE,
     HOP_SIZE,
     MOODTHEME_DIM,
     NUMBER_BANDS,
-    PATCH_SIZE_EFFNET,
-    PROB_DIM,
     SAMPLE_RATE,
     dump_diagnostics,
     select_by_shape,
-    sha256_bytes,
 )
 
 BASE = "https://essentia.upf.edu/models"
@@ -78,7 +74,6 @@ def onnx_pooled_embedding(session, in_name: str, patches: np.ndarray) -> tuple[n
 
 
 def main() -> None:
-    import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--clips", required=True)
@@ -97,7 +92,7 @@ def main() -> None:
     onnx_path = Path(args.models) / "discogs-effnet-bsdynamic-1.onnx"
     if not onnx_path.exists():
         print(f"downloading {ONNX_URL}")
-        urllib.request.urlretrieve(ONNX_URL, onnx_path)  # noqa: S310
+        urllib.request.urlretrieve(ONNX_URL, onnx_path)
     digest = sha256_file(onnx_path)
     size = onnx_path.stat().st_size
     print(f"onnx model: {size} bytes sha256={digest[:16]}...")

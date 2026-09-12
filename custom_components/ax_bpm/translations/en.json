@@ -9,12 +9,18 @@
     "step": {
       "user": {
         "title": "AX BPM Configuration",
-        "description": "Track the tempo (BPM) of the currently playing media. All network requests are anonymous — no API key required. {mood_warning}",
+        "description": "Track the tempo (BPM) of the currently playing media. All network requests are anonymous — no API key required. {sidecar_status}",
         "data": {
           "media_player": "Media Player",
-          "genre_correction": "Genre-based octave disambiguation",
-          "mood_correction": "Mood-based octave disambiguation",
-          "aubio_binary": "Path to external aubio binary (optional)"
+          "octave_disambiguation": "Octave disambiguation",
+          "mood_analyzer_url": "Sidecar mood analyzer URL (optional, overrides auto-detect)",
+          "aubio_binary": "Path to external aubio binary (optional)",
+          "mood_api_token": "Sidecar API token (optional)"
+        },
+        "data_description": {
+          "octave_disambiguation": "Correct beat-tracker octave errors. 'Genre + mood' needs the AX BPM sidecar add-on; it degrades to genre-only when the sidecar is unreachable.",
+          "mood_analyzer_url": "Leave empty to auto-detect the sidecar (add-on hostname, then homeassistant.local:8099).",
+          "mood_api_token": "Shared secret set in the AX-BPM Sidecar add-on options. Sent as a Bearer token on /analyze only. Leave empty if the add-on has no token set."
         }
       }
     },
@@ -26,13 +32,28 @@
     "step": {
       "init": {
         "title": "AX BPM Options",
-        "description": "Update your AX BPM configuration.",
+        "description": "Update your AX BPM configuration. {sidecar_status}",
         "data": {
           "media_player": "Media Player",
-          "genre_correction": "Genre-based octave disambiguation",
-          "mood_correction": "Mood-based octave disambiguation",
-          "aubio_binary": "Path to external aubio binary (optional)"
+          "octave_disambiguation": "Octave disambiguation",
+          "mood_analyzer_url": "Sidecar mood analyzer URL (optional, overrides auto-detect)",
+          "aubio_binary": "Path to external aubio binary (optional)",
+          "mood_api_token": "Sidecar API token (optional)"
+        },
+        "data_description": {
+          "octave_disambiguation": "Correct beat-tracker octave errors. 'Genre + mood' needs the AX BPM sidecar add-on; it degrades to genre-only when the sidecar is unreachable.",
+          "mood_analyzer_url": "Leave empty to auto-detect the sidecar (add-on hostname, then homeassistant.local:8099).",
+          "mood_api_token": "Shared secret set in the AX-BPM Sidecar add-on options. Sent as a Bearer token on /analyze only. Leave empty if the add-on has no token set."
         }
+      }
+    }
+  },
+  "selector": {
+    "octave_disambiguation": {
+      "options": {
+        "off": "Off",
+        "genre_only": "Genre only",
+        "genre_mood": "Genre + mood"
       }
     }
   }

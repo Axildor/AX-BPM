@@ -1,0 +1,12 @@
+# AX-BPM sidecar runtime dependencies — EXACT pins.
+# Pinned to the versions validated by the green golden CI run; addon-builder
+# rebuilds must be reproducible. NO floating deps.
+# NO essentia, NO TensorFlow — pure NumPy front end + ONNX Runtime.
+numpy==2.5.3
+scipy==1.18.1
+onnxruntime==1.23.2
+fastapi==0.141.1
+uvicorn==0.52.4
+python-multipart==0.0.32
+miniaudio==1.71
+soundfile==0.14.0

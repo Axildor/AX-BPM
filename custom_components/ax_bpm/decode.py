@@ -28,15 +28,13 @@ _FFMPEG_TIMEOUT = 30.0
 def _decode_with_miniaudio(path: str) -> tuple[np.ndarray, int] | None:
     """Decode via the miniaudio wheel (if installed)."""
     try:
-        import miniaudio  # noqa: PLC0415
+        import miniaudio
     except ImportError:
         return None
     try:
         decoded = miniaudio.decode_file(path, nchannels=1, sample_rate=DECODE_SAMPLE_RATE)
         samples = np.asarray(decoded.samples, dtype=np.float32)
-        if samples.dtype == np.int16:
-            samples = samples / 32768.0
-        elif samples.max(initial=0) > 1.5:  # int8-ish or int32 payload
+        if samples.dtype == np.int16 or samples.max(initial=0) > 1.5:
             samples = samples / 32768.0
         return samples, DECODE_SAMPLE_RATE
     except Exception as err:  # noqa: BLE001 — any decode failure falls through
@@ -47,7 +45,7 @@ def _decode_with_miniaudio(path: str) -> tuple[np.ndarray, int] | None:
 def _decode_with_soundfile(path: str) -> tuple[np.ndarray, int] | None:
     """Decode via the soundfile wheel (libsndfile bundled, MP3-capable)."""
     try:
-        import soundfile as sf  # noqa: PLC0415
+        import soundfile as sf
     except ImportError:
         return None
     try:
@@ -93,7 +91,7 @@ def _decode_with_ffmpeg(path: str) -> tuple[np.ndarray, int] | None:
         return None
     finally:
         try:
-            import os  # noqa: PLC0415
+            import os
 
             os.unlink(raw_path)
         except OSError:
@@ -104,7 +102,7 @@ def _resample_linear(samples: np.ndarray, target_sr: int) -> np.ndarray:
     """Cheap linear-interpolation resample (good enough for tempo analysis)."""
     if samples.size < 2:
         return samples
-    n_target = int(round(len(samples) * target_sr / DECODE_SAMPLE_RATE))
+    n_target = round(len(samples) * target_sr / DECODE_SAMPLE_RATE)
     if n_target < 2:
         return samples
     src_idx = np.linspace(0.0, len(samples) - 1, num=n_target)
@@ -117,13 +115,13 @@ _DECODERS = (_decode_with_miniaudio, _decode_with_soundfile, _decode_with_ffmpeg
 def decode_available() -> bool:
     """True when at least one decoder can plausibly run right now."""
     try:
-        import miniaudio  # noqa: F401, PLC0415
+        import miniaudio  # noqa: F401
 
         return True
     except ImportError:
         pass
     try:
-        import soundfile  # noqa: F401, PLC0415
+        import soundfile  # noqa: F401
 
         return True
     except ImportError:

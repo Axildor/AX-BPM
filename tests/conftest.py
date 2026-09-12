@@ -52,9 +52,25 @@ def _stub_homeassistant() -> None:
     class _ConfigEntry:  # annotation-only usage
         pass
     config_entries.ConfigEntry = _ConfigEntry
+    config_entries.ConfigFlow = type("ConfigFlow", (), {"__init_subclass__": classmethod(lambda cls, **kwargs: None)})
+    config_entries.OptionsFlow = type("OptionsFlow", (), {})
 
     helpers = _ensure_module("homeassistant.helpers")
     helpers.__path__ = []
+
+    # Stub submodules referenced at import time by config_flow.py.
+    selector = _ensure_module("homeassistant.helpers.selector")
+    class _SelectorConfig:  # attribute-bag used only at schema-build time
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+    selector.EntitySelector = lambda cfg=None: ("entity", cfg)
+    selector.EntitySelectorConfig = _SelectorConfig
+    selector.SelectSelector = lambda cfg=None: ("select", cfg)
+    selector.SelectSelectorConfig = _SelectorConfig
+    selector.SelectSelectorMode = type("SelectSelectorMode", (), {"DROPDOWN": "dropdown"})
+
+    aiohttp_client = _ensure_module("homeassistant.helpers.aiohttp_client")
+    aiohttp_client.async_get_clientsession = lambda hass: None
 
     storage = _ensure_module("homeassistant.helpers.storage")
     class Store:  # replaced/mocked in tests; never instantiated here
