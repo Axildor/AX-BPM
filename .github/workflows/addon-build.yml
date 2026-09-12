@@ -19,7 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build ${{ matrix.arch }}
-        uses: home-assistant/builder@2026.06.0
+        # 2026.02.1 = latest release whose ghcr.io builder image exists
+        # (2026.06.0 action resolves but its builder image is "manifest unknown").
+        uses: home-assistant/builder@2026.02.1
         with:
           args: |
             --all \

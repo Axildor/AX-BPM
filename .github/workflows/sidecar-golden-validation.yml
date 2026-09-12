@@ -51,7 +51,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsamplerate0
 
       - name: Install pinned dependencies
-        run: pip install -r sidecar/requirements-dev.txt
+        run: |
+          pip install -r sidecar/requirements-dev.txt
+          # Integration suite: deezer.py imports aiohttp at module level
+          # (tests/conftest.py stubs homeassistant, not aiohttp).
+          pip install aiohttp==3.14.3
 
       - name: HARD assert — onnxruntime importable
         run: python -c "import onnxruntime; print('onnxruntime', onnxruntime.__version__)"
