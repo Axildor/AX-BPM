@@ -103,18 +103,17 @@ def composed_logmel(audio: np.ndarray) -> np.ndarray:
     shift_op = es.UnaryOperator(shift=SPEC["shift"], scale=SPEC["scale"])
     compression_op = es.UnaryOperator(type=SPEC["compression"])
 
-    # FrameCutter semantics: startFromZero=false (zero-centered first frame),
-    # matching the reference FrameCutter configuration.
-    frames = es.FrameCutter(
-        frameSize=SPEC["frameSize"],
-        hopSize=SPEC["hopSize"],
-        startFromZero=False,
+    # FrameGenerator is the standard-mode iterator over FrameCutter
+    # semantics: startFromZero=false (zero-centered first frame), matching
+    # the reference FrameCutter configuration.
+    frames = es.FrameGenerator(
+        audio, frameSize=SPEC["frameSize"], hopSize=SPEC["hopSize"], startFromZero=False
     )
 
     out = []
-    for frame in frames(audio):
+    for frame in frames:
         # standard-mode algorithms expect VECTOR_REAL (Python list), not
-        # the numpy arrays FrameCutter yields.
+        # the numpy arrays FrameGenerator yields.
         frame = frame.tolist()
         spec = spectrum(window(frame))
         bands = mel(spec)
