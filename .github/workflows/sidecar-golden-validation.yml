@@ -47,8 +47,12 @@ jobs:
           path: .axbpm-models
           key: axbpm-models-${{ hashFiles('sidecar/ax_bpm_sidecar/config.py') }}
 
-      - name: Install system deps (libsamplerate for the golden resampler)
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsamplerate0
+      - name: Install system deps (libsamplerate + ffmpeg)
+        # libsamplerate0: the golden-test conftest resamples via ctypes on
+        # the system lib (essentia MonoLoader replication).
+        # ffmpeg: the integration decode-chain tests exercise the real
+        # ffmpeg fallback path (never silently weaken decode coverage).
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsamplerate0 ffmpeg
 
       - name: Install pinned dependencies
         run: |
