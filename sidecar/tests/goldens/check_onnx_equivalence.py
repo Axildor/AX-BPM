@@ -199,7 +199,9 @@ def main() -> None:
             if out_name is None:
                 out_name = graph.get_operations()[-1].name + ":0"
             sess = tf.compat.v1.Session(graph=graph)
-            return sess, in_name, out_name
+            # Head placeholders may be 1D [1280] or 2D [?, 1280].
+            in_rank = graph.get_tensor_by_name(in_name).shape.rank
+            return sess, in_name, out_name, in_rank
 
         heads = {}
         for head_key, out_dim in (
@@ -207,16 +209,17 @@ def main() -> None:
             ("danceability_head", DANCEABILITY_DIM),
         ):
             head_fname = meta["models"][head_key]["filename"]
-            sess, in_name, out_name = load_head(Path(args.models) / head_fname)
-            heads[head_key] = (sess, in_name, out_name, out_dim)
+            sess, in_name, out_name, in_rank = load_head(Path(args.models) / head_fname)
+            heads[head_key] = (sess, in_name, out_name, in_rank)
 
         for head_key, prob_key in (
             ("moodtheme_head", "mood_probs"),
             ("danceability_head", "dance_probs"),
         ):
-            sess, in_name, out_name, out_dim = heads[head_key]
+            sess, in_name, out_name, in_rank = heads[head_key]
             for name, pooled_onnx in pooled_by_clip.items():
-                probs = sess.run(out_name, {in_name: pooled_onnx[None, :]})[0].astype(np.float32)
+                x = pooled_onnx[None, :] if in_rank == 2 else pooled_onnx
+                probs = sess.run(out_name, {in_name: x})[0].astype(np.float32)
                 ref = goldens[f"{name}__{prob_key}"]
                 if probs.shape != ref.shape:
                     dump_diagnostics(f"{name}/{prob_key}", probs=probs, ref=ref)

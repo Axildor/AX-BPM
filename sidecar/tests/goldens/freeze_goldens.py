@@ -210,11 +210,13 @@ def main() -> None:
     sess_dance = tf.compat.v1.Session(graph=dance_graph)
 
     # 4. Probe the effnet graph once: fetch BOTH outputs and verify shapes.
+    # The bs64 graph input is FIXED [64, 128, 96] (3D: batch, patch, bands;
+    # the channel dim is squeezed by Essentia's predict wrapper).
     probe_in_shape = effnet_graph.get_tensor_by_name(
         placeholder_of(effnet_graph)
     ).shape.as_list()
     print(f"  effnet graph input shape: {probe_in_shape}")
-    probe = np.zeros((1, 1, PATCH_SIZE_EFFNET, NUMBER_BANDS), dtype=np.float32)
+    probe = np.zeros(probe_in_shape, dtype=np.float32)
     try:
         probe_outs = sess.run([emb_t, effnet_tensors[PROB_DIM]], {placeholder_of(effnet_graph): probe})
     except Exception as exc:  # noqa: BLE001
@@ -252,19 +254,34 @@ def main() -> None:
         n_patches = patches.shape[0]
         print(f"  patches: {patches.shape} (patchSize=128, patchHopSize=62, repeat)")
 
-        # bs64 embeddings per patch, selected by SHAPE (trailing dim 1280)
+        # bs64 embeddings per patch, selected by SHAPE (trailing dim 1280).
+        # The bs64 graph has a FIXED batch of 64: pad the last batch with
+        # repeated patches and keep only the first n outputs (batch entries
+        # are independent, so padding does not affect the kept outputs).
+        batch = probe_in_shape[0]
         embs = []
-        for i in range(n_patches):
-            outs = sess.run([emb_t], {placeholder_of(effnet_graph): patches[i : i + 1]})
-            embs.append(outs[0].reshape(-1, EMB_DIM))
+        for start in range(0, n_patches, batch):
+            chunk = patches[start : start + batch]
+            n_keep = chunk.shape[0]
+            if chunk.shape[0] < batch:
+                pad = np.repeat(chunk[-1:], batch - chunk.shape[0], axis=0)
+                chunk = np.concatenate([chunk, pad], axis=0)
+            outs = sess.run([emb_t], {placeholder_of(effnet_graph): chunk})
+            embs.append(outs[0].reshape(batch, EMB_DIM)[:n_keep])
         embeddings = np.concatenate(embs, axis=0).astype(np.float32)  # (n, 1280)
 
         # POOL: mean over patches -> single 1280-d vector
         pooled = embeddings.mean(axis=0).astype(np.float32)  # (1280,)
 
-        # head probabilities on the POOLED vector
-        probs_mood = sess_mood.run(mood_out_t, {mood_in_t: pooled[None, :]})[0].astype(np.float32)
-        probs_dance = sess_dance.run(dance_out_t, {dance_in_t: pooled[None, :]})[0].astype(np.float32)
+        # head probabilities on the POOLED vector. Head placeholders may be
+        # 1D [1280] or 2D [?, 1280]; feed the shape the graph expects.
+        def head_feed(sess, graph, in_t, out_t, vec):
+            in_shape = graph.get_tensor_by_name(in_t).shape.as_list()
+            x = vec[None, :] if len(in_shape) == 2 else vec
+            return sess.run(out_t, {in_t: x})[0].astype(np.float32)
+
+        probs_mood = head_feed(sess_mood, mood_graph, mood_in_t, mood_out_t, pooled)
+        probs_dance = head_feed(sess_dance, dance_graph, dance_in_t, dance_out_t, pooled)
 
         # checksums over the raw first patch (bit-exactness guard)
         cksum_e = sha256_bytes(patches[0])
