@@ -53,9 +53,9 @@ jobs:
       - name: Install pinned dependencies
         run: |
           pip install -r sidecar/requirements-dev.txt
-          # Integration suite: deezer.py imports aiohttp at module level
-          # (tests/conftest.py stubs homeassistant, not aiohttp).
-          pip install aiohttp==3.14.3
+          # Integration suite: the conftest stubs homeassistant but not the
+          # other third-party modules the integration imports at module level.
+          pip install aiohttp==3.14.3 voluptuous==0.16.0
 
       - name: HARD assert — onnxruntime importable
         run: python -c "import onnxruntime; print('onnxruntime', onnxruntime.__version__)"
