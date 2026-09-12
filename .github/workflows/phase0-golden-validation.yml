@@ -1,0 +1,82 @@
+name: Phase 0 — Golden Validation (AX-BPM sidecar gate)
+
+# One-shot glibc job: the devcontainer is Alpine/musl and cannot run
+# TensorFlow. This workflow_dispatch job runs the TF reference path on
+# ubuntu-latest, freezes goldens, runs the ONNX equivalence gate, and
+# (optionally) commits the goldens back to the repo.
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_goldens:
+        description: "Commit goldens back to the repo"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  golden-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install glibc-only reference stack
+        run: |
+          pip install --no-cache-dir \
+            "tensorflow-cpu==2.20.0" \
+            "essentia-tensorflow==2.1b6.dev1110" \
+            "onnxruntime>=1.19" \
+            numpy scipy
+
+      - name: Generate deterministic clips
+        run: python sidecar/tests/goldens/generate_clips.py /tmp/clips
+
+      - name: Freeze goldens (TF reference path)
+        run: >
+          python sidecar/tests/goldens/freeze_goldens.py
+          --clips /tmp/clips
+          --out sidecar/tests/goldens
+          --models /tmp/models
+
+      - name: GATE — ONNX bsdynamic vs bs64 TF equivalence
+        run: >
+          python sidecar/tests/goldens/check_onnx_equivalence.py
+          --clips /tmp/clips
+          --goldens sidecar/tests/goldens
+          --models /tmp/models
+          --heads
+
+      - name: Front-end composition test (no TensorflowInput*)
+        run: >
+          python sidecar/tests/goldens/composed_frontend.py
+          --clips /tmp/clips
+          --goldens sidecar/tests/goldens
+
+      - name: Upload goldens artifact (always)
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase0-goldens
+          path: |
+            sidecar/tests/goldens/goldens.npz
+            sidecar/tests/goldens/goldens_meta.json
+            sidecar/tests/goldens/onnx_equivalence_results.json
+            sidecar/tests/goldens/frontend_composition_results.json
+
+      - name: Commit goldens
+        if: ${{ inputs.commit_goldens }}
+        run: |
+          git config user.name "phase0-golden-bot"
+          git config user.email "phase0-golden-bot@users.noreply.github.com"
+          git add sidecar/tests/goldens/
+          if git diff --cached --quiet; then
+            echo "No golden changes to commit"
+          else
+            git commit -m "phase0: refresh goldens (gate $(cat sidecar/tests/goldens/onnx_equivalence_results.json | python -c 'import json,sys; print(json.load(sys.stdin)["verdict"])'))"
+            git push
+          fi
