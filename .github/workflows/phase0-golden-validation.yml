@@ -4,6 +4,12 @@ name: Phase 0 — Golden Validation (AX-BPM sidecar gate)
 # TensorFlow. This workflow_dispatch job runs the TF reference path on
 # ubuntu-latest, freezes goldens, runs the ONNX equivalence gate, and
 # (optionally) commits the goldens back to the repo.
+#
+# Inputs:
+#   commit_goldens - commit goldens back to the repo (default true)
+#   debug          - diagnostic mode: same generate->freeze->compare->compose
+#                    sequence in one run, but NEVER commits goldens and
+#                    uploads the full logs as an artifact for iteration.
 
 on:
   workflow_dispatch:
@@ -12,6 +18,10 @@ on:
         description: "Commit goldens back to the repo"
         type: boolean
         default: true
+      debug:
+        description: "Debug mode: run everything, commit nothing, upload logs"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -33,6 +43,29 @@ jobs:
             "essentia-tensorflow==2.1b6.dev1389" \
             "onnxruntime>=1.19" \
             numpy scipy
+
+      # Assumption guards BEFORE any heavy work: fail fast with a clear
+      # message if the environment does not match the pinned expectations.
+      - name: Assumption guards (API surface + versions)
+        run: |
+          python - <<'EOF'
+          import sys
+          import essentia
+          import essentia.standard as es
+          import tensorflow as tf
+          import onnxruntime as ort
+          import numpy as np
+          print(f"essentia={essentia.__version__} tf={tf.__version__} "
+                f"ort={ort.__version__} numpy={np.__version__}")
+          required = ["TensorflowInputMusiCNN", "TensorflowPredictEffnetDiscogs",
+                      "MonoLoader", "Windowing", "Spectrum", "MelBands",
+                      "UnaryOperator", "FrameCutter"]
+          missing = [n for n in required if not hasattr(es, n)]
+          if missing:
+              print(f"FATAL: missing essentia.standard algorithms: {missing}")
+              sys.exit(1)
+          print("assumption guards: OK")
+          EOF
 
       - name: Generate deterministic clips
         run: python sidecar/tests/goldens/generate_clips.py /tmp/clips
@@ -59,17 +92,29 @@ jobs:
           --goldens sidecar/tests/goldens
 
       - name: Upload goldens artifact (always)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: phase0-goldens
+          name: phase0-goldens${{ inputs.debug && '-debug' || '' }}
           path: |
             sidecar/tests/goldens/goldens.npz
             sidecar/tests/goldens/goldens_meta.json
             sidecar/tests/goldens/onnx_equivalence_results.json
             sidecar/tests/goldens/frontend_composition_results.json
 
+      - name: Upload debug logs (debug mode only)
+        if: ${{ inputs.debug }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase0-debug-logs
+          path: |
+            /tmp/models/*.sha256
+            sidecar/tests/goldens/*.json
+
+      # Goldens are committed ONLY when the full gate passed
+      # (all previous steps succeeded) and debug mode is off.
       - name: Commit goldens
-        if: ${{ inputs.commit_goldens }}
+        if: ${{ inputs.commit_goldens && !inputs.debug && success() }}
         run: |
           git config user.name "phase0-golden-bot"
           git config user.email "phase0-golden-bot@users.noreply.github.com"

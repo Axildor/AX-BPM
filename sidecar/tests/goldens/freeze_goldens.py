@@ -5,16 +5,20 @@ MUST run in a glibc environment (ubuntu-latest / python:3.12-slim) with:
     pip install essentia-tensorflow tensorflow-cpu numpy
 
 For each clip (from generate_clips.py) this script:
-  1. Computes the log-mel patch tensors via TensorflowInputEffnetDiscogs
-     (effnet spec) and TensorflowInputMusiCNN (musicnn spec).
-  2. Runs discogs-effnet-bs64-1.pb -> 200-dim embeddings.
-  3. Runs the classification heads:
-       - mtg_jamendo_moodtheme-discogs-effnet-1
-       - danceability-discogs-effnet-1
-  4. Stores per-clip: bs64 embeddings (float32), head probabilities,
-     mel-patch SHA-256 checksums, and a small strided subsample of each
-     mel patch (for tolerance comparison in CI; checksums guard
-     bit-exactness).
+  1. Computes the log-mel frames via TensorflowInputMusiCNN (the ONLY
+     front-end algorithm; effnet predict reuses it internally).
+  2. Patches with patchSize=128, patchHopSize=62, lastPatchMode="repeat"
+     (TensorflowPredictEffnetDiscogs defaults).
+  3. Runs discogs-effnet-bs64-1.pb -> per-patch embeddings [n, 1280]
+     (selected by SHAPE: trailing dim 1280, not by TF output name).
+  4. Pools per-patch embeddings via mean -> single 1280-d vector.
+  5. Runs the classification heads on the POOLED vector:
+       - mtg_jamendo_moodtheme-discogs-effnet-1  -> [56]
+       - danceability-discogs-effnet-1           -> [2]
+  6. Stores per-clip: pooled embedding (float32), patch count, head
+     probabilities, sha256 of raw mel patch 0 float32 bytes, and a small
+     strided subsample of mel patch 0 (for tolerance comparison in CI;
+     checksums guard bit-exactness).
 
 Outputs (written to --out):
     goldens.npz        - the tensors
@@ -33,6 +37,34 @@ import urllib.request
 from pathlib import Path
 
 import numpy as np
+
+from phase0_common import (
+    BATCH_SIZE_EFFNET,
+    BANDS_TYPE,
+    COMPRESSION,
+    DANCEABILITY_DIM,
+    EMB_DIM,
+    EFFNET_PATCH_SPEC,
+    FRAME_SIZE,
+    HIGH_FREQUENCY_BOUND,
+    HOP_SIZE,
+    LAST_BATCH_MODE_EFFNET,
+    MOODTHEME_DIM,
+    MUSICNN_PATCH_SPEC,
+    NORMALIZE,
+    NUMBER_BANDS,
+    PATCH_SIZE_EFFNET,
+    PROB_DIM,
+    SAMPLE_RATE,
+    SCALE,
+    SHIFT,
+    WARPING_FORMULA,
+    WEIGHTING,
+    WINDOW_NORMALIZED,
+    WINDOW_TYPE,
+    dump_diagnostics,
+    sha256_bytes,
+)
 
 BASE = "https://essentia.upf.edu/models"
 MODELS = {
@@ -69,8 +101,6 @@ def sha256_file(path: Path) -> str:
 
 def download_models(model_dir: Path) -> dict:
     """Download all models; verify non-empty. Returns metadata dict."""
-    import essentia  # noqa: F401  (version recorded in meta)
-
     model_dir.mkdir(parents=True, exist_ok=True)
     meta = {}
     for key, (url, fname) in MODELS.items():
@@ -83,6 +113,35 @@ def download_models(model_dir: Path) -> dict:
         print(f"  {fname}: {size} bytes sha256={digest[:16]}...")
         meta[key] = {"url": url, "filename": fname, "size": size, "sha256": digest}
     return meta
+
+
+def load_graph(path: Path) -> tuple:
+    """Load a frozen TF graph. Returns (graph, tensor_names_by_trailing_dim).
+
+    Tensor selection is by SHAPE, not by name: we enumerate every op output
+    with a statically known shape and index them by trailing dim. TF names
+    like `PartitionedCall:1` may differ across exports.
+    """
+    import tensorflow as tf
+
+    graph = tf.Graph()
+    with graph.as_default():
+        od_graph_def = tf.compat.v1.GraphDef()
+        with tf.io.gfile.GFile(str(path), "rb") as f:
+            od_graph_def.ParseFromString(f.read())
+        tf.import_graph_def(od_graph_def, name="")
+
+    by_trailing: dict[int, str] = {}
+    for op in graph.get_operations():
+        for out in op.outputs:
+            shape = out.shape
+            if shape.rank is None or shape.rank < 2:
+                continue
+            dims = shape.as_list()
+            if dims and dims[-1] is not None and dims[-1] > 1:
+                by_trailing.setdefault(dims[-1], out.name)
+    print(f"  {path.name}: tensors by trailing dim: {sorted(by_trailing)}")
+    return graph, by_trailing
 
 
 def main() -> None:
@@ -105,61 +164,70 @@ def main() -> None:
 
     model_meta = download_models(model_dir)
 
-    # --- Load TF graphs -----------------------------------------------------
-    def load_graph(path: Path) -> tuple[tf.Graph, str, str]:
-        graph = tf.Graph()
-        with graph.as_default():
-            od_graph_def = tf.compat.v1.GraphDef()
-            with tf.io.gfile.GFile(str(path), "rb") as f:
-                od_graph_def.ParseFromString(f.read())
-            tf.import_graph_def(od_graph_def, name="")
-        # discover input/output names from the graph itself
-        ops = [op.name for op in graph.get_operations()]
-        input_name = next(
-            (o for o in ops if "input" in o.lower() and "Placeholder" in graph.get_operation_by_name(o).type),
-            ops[0],
-        )
-        output_name = ops[-1]
-        return graph, input_name + ":0", output_name + ":0"
+    # --- Load TF graphs (shape-indexed) -------------------------------------
+    effnet_graph, effnet_tensors = load_graph(model_dir / "discogs-effnet-bs64-1.pb")
+    mood_graph, mood_tensors = load_graph(model_dir / "mtg_jamendo_moodtheme-discogs-effnet-1.pb")
+    dance_graph, dance_tensors = load_graph(model_dir / "danceability-discogs-effnet-1.pb")
 
-    effnet_graph, effnet_in, effnet_out = load_graph(model_dir / "discogs-effnet-bs64-1.pb")
-    mood_graph, mood_in, mood_out = load_graph(model_dir / "mtg_jamendo_moodtheme-discogs-effnet-1.pb")
-    dance_graph, dance_in, dance_out = load_graph(model_dir / "danceability-discogs-effnet-1.pb")
+    # --- Assumption guards (before heavy work) ------------------------------
+    # 1. The front-end algorithm must exist.
+    if not hasattr(es, "TensorflowInputMusiCNN"):
+        print("FATAL: essentia.standard has no TensorflowInputMusiCNN", file=sys.stderr)
+        sys.exit(1)
+    # 2. The effnet graph must expose 1280-dim (embeddings) and 400-dim
+    #    (predictions) outputs.
+    if EMB_DIM not in effnet_tensors or PROB_DIM not in effnet_tensors:
+        print(
+            f"FATAL: effnet graph missing expected outputs (need trailing dims "
+            f"{EMB_DIM} and {PROB_DIM}); found {sorted(effnet_tensors)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    # 3. Heads must expose their expected output dims.
+    if MOODTHEME_DIM not in mood_tensors:
+        print(f"FATAL: moodtheme head missing {MOODTHEME_DIM}-dim output; found {sorted(mood_tensors)}", file=sys.stderr)
+        sys.exit(1)
+    if DANCEABILITY_DIM not in dance_tensors:
+        print(f"FATAL: danceability head missing {DANCEABILITY_DIM}-dim output; found {sorted(dance_tensors)}", file=sys.stderr)
+        sys.exit(1)
+
+    emb_t = effnet_tensors[EMB_DIM]
+    mood_out_t = mood_tensors[MOODTHEME_DIM]
+    dance_out_t = dance_tensors[DANCEABILITY_DIM]
+
+    # Head inputs: the Placeholder ops (1280-dim embeddings go in).
+    def placeholder_of(graph) -> str:
+        for op in graph.get_operations():
+            if op.type == "Placeholder":
+                return op.name + ":0"
+        raise RuntimeError("no Placeholder op found")
+
+    mood_in_t = placeholder_of(mood_graph)
+    dance_in_t = placeholder_of(dance_graph)
 
     sess = tf.compat.v1.Session(graph=effnet_graph)
     sess_mood = tf.compat.v1.Session(graph=mood_graph)
     sess_dance = tf.compat.v1.Session(graph=dance_graph)
 
-    # --- Front ends (reference path: TensorflowInput* components) -----------
-    sr_effnet = 16000
-    frame_effnet = 512
-    hop_effnet = 256
-    bands_effnet = 96
-    patch_effnet = 187  # 187 x 96 x 1
+    # 4. Probe the effnet graph once: fetch BOTH outputs and verify shapes.
+    probe_in_shape = effnet_graph.get_tensor_by_name(
+        placeholder_of(effnet_graph)
+    ).shape.as_list()
+    print(f"  effnet graph input shape: {probe_in_shape}")
+    probe = np.zeros((1, 1, PATCH_SIZE_EFFNET, NUMBER_BANDS), dtype=np.float32)
+    try:
+        probe_outs = sess.run([emb_t, effnet_tensors[PROB_DIM]], {placeholder_of(effnet_graph): probe})
+    except Exception as exc:  # noqa: BLE001
+        print(f"FATAL: effnet probe inference failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    emb_probe, prob_probe = probe_outs
+    if emb_probe.shape[-1] != EMB_DIM or prob_probe.shape[-1] != PROB_DIM:
+        dump_diagnostics("effnet probe", emb=emb_probe, probs=prob_probe)
+        sys.exit(1)
+    print(f"  effnet probe OK: emb {emb_probe.shape}, probs {prob_probe.shape}")
 
-    sr_musicnn = 16000
-    frame_musicnn = 1024
-    hop_musicnn = 512
-    bands_musicnn = 96
-    patch_musicnn = 187
-
-    fe_effnet = es.TensorflowInputEffnetDiscogs()
-    fe_musicnn = es.TensorflowInputMusiCNN()
-
-    # Record the ACTUAL specs from the components (do not trust constants).
-    def spec_of(algo) -> dict:
-        spec = {}
-        for name in ("sampleRate", "frameSize", "hopSize", "numberBands", "patchSize"):
-            try:
-                spec[name] = getattr(algo, name)() if callable(getattr(algo, name, None)) else getattr(algo, name)
-            except Exception:
-                spec[name] = None
-        return spec
-
-    spec_effnet = spec_of(fe_effnet)
-    spec_musicnn = spec_of(fe_musicnn)
-    print(f"effnet spec:  {spec_effnet}")
-    print(f"musicnn spec: {spec_musicnn}")
+    # --- Front end (reference path: TensorflowInputMusiCNN) -----------------
+    fe = es.TensorflowInputMusiCNN()
 
     # --- Per-clip processing -------------------------------------------------
     wavs = sorted(clips_dir.glob("*.wav"))
@@ -172,56 +240,61 @@ def main() -> None:
 
     for wav in wavs:
         name = wav.stem
-        audio = es.MonoLoader(filename=str(wav), sampleRate=sr_effnet)()
+        audio = es.MonoLoader(filename=str(wav), sampleRate=SAMPLE_RATE)()
         print(f"processing {name}: {audio.shape[0]} samples")
 
-        # effnet mel patch (reference)
-        patch_e = fe_effnet(audio)  # (frames, bands) float32
-        n_frames_e = (patch_e.shape[0] // patch_effnet) * patch_effnet
-        patch_e = patch_e[:n_frames_e].reshape(-1, patch_effnet, bands_effnet, 1)
+        # log-mel frames (reference front end)
+        logmel = fe(audio)  # (n_frames, 96) float32
+        print(f"  logmel frames: {logmel.shape}")
 
-        # musicnn mel patch (reference)
-        audio_m = es.MonoLoader(filename=str(wav), sampleRate=sr_musicnn)()
-        patch_m = fe_musicnn(audio_m)
-        n_frames_m = (patch_m.shape[0] // patch_musicnn) * patch_musicnn
-        patch_m = patch_m[:n_frames_m].reshape(-1, patch_musicnn, bands_musicnn, 1)
+        # effnet patching: 128 frames, hop 62, repeat tail
+        patches = EFFNET_PATCH_SPEC.make_patches(logmel)  # (n, 128, 96)
+        n_patches = patches.shape[0]
+        print(f"  patches: {patches.shape} (patchSize=128, patchHopSize=62, repeat)")
 
-        # bs64 embeddings on full patches (batch through the graph)
+        # bs64 embeddings per patch, selected by SHAPE (trailing dim 1280)
         embs = []
-        for i in range(patch_e.shape[0]):
-            emb = sess.run(effnet_out, {effnet_in: patch_e[i : i + 1]})[0]
-            embs.append(emb)
-        embeddings = np.concatenate(embs, axis=0).astype(np.float32)  # (n_patches, 200)
+        for i in range(n_patches):
+            outs = sess.run([emb_t], {placeholder_of(effnet_graph): patches[i : i + 1]})
+            embs.append(outs[0].reshape(-1, EMB_DIM))
+        embeddings = np.concatenate(embs, axis=0).astype(np.float32)  # (n, 1280)
 
-        # head probabilities on the mean embedding (standard usage)
-        mean_emb = embeddings.mean(axis=0, keepdims=True)
-        probs_mood = sess_mood.run(mood_out, {mood_in: mean_emb})[0].astype(np.float32)
-        probs_dance = sess_dance.run(dance_out, {dance_in: mean_emb})[0].astype(np.float32)
+        # POOL: mean over patches -> single 1280-d vector
+        pooled = embeddings.mean(axis=0).astype(np.float32)  # (1280,)
 
-        # checksums over the full first patch (bit-exactness guard)
-        cksum_e = hashlib.sha256(patch_e[0].tobytes()).hexdigest()
-        cksum_m = hashlib.sha256(patch_m[0].tobytes()).hexdigest()
+        # head probabilities on the POOLED vector
+        probs_mood = sess_mood.run(mood_out_t, {mood_in_t: pooled[None, :]})[0].astype(np.float32)
+        probs_dance = sess_dance.run(dance_out_t, {dance_in_t: pooled[None, :]})[0].astype(np.float32)
+
+        # checksums over the raw first patch (bit-exactness guard)
+        cksum_e = sha256_bytes(patches[0])
+
+        # musicnn spec: same front end, patch 187 contiguous (v1.1 note)
+        patches_m = MUSICNN_PATCH_SPEC.make_patches(logmel)
+        cksum_m = sha256_bytes(patches_m[0])
 
         # strided subsample of first patch for tolerance comparison
-        idx = np.linspace(0, patch_effnet - 1, PATCH_SUBSAMPLE_FRAMES, dtype=int)
-        sub_e = patch_e[0][idx, :, 0].astype(np.float32)  # (16, 96)
-        idx_m = np.linspace(0, patch_musicnn - 1, PATCH_SUBSAMPLE_FRAMES, dtype=int)
-        sub_m = patch_m[0][idx_m, :, 0].astype(np.float32)
+        idx = np.linspace(0, PATCH_SIZE_EFFNET - 1, PATCH_SUBSAMPLE_FRAMES, dtype=int)
+        sub_e = patches[0][idx, :].astype(np.float32)  # (16, 96)
 
-        store[f"{name}__emb"] = embeddings
+        store[f"{name}__pooled_emb"] = pooled
         store[f"{name}__mood_probs"] = probs_mood
         store[f"{name}__dance_probs"] = probs_dance
         store[f"{name}__patch_effnet_sub"] = sub_e
-        store[f"{name}__patch_musicnn_sub"] = sub_m
 
         clip_meta[name] = {
-            "n_patches_effnet": int(patch_e.shape[0]),
-            "n_patches_musicnn": int(patch_m.shape[0]),
+            "n_frames": int(logmel.shape[0]),
+            "n_patches_effnet": int(n_patches),
+            "n_patches_musicnn": int(patches_m.shape[0]),
             "patch_effnet_sha256": cksum_e,
             "patch_musicnn_sha256": cksum_m,
-            "embedding_dim": int(embeddings.shape[1]),
+            "embedding_dim": EMB_DIM,
+            "pooled_emb_norm": float(np.linalg.norm(pooled)),
         }
-        print(f"  embeddings {embeddings.shape}, mood probs {probs_mood.shape}, dance probs {probs_dance.shape}")
+        print(
+            f"  pooled emb {pooled.shape} (norm {clip_meta[name]['pooled_emb_norm']:.4f}), "
+            f"mood probs {probs_mood.shape}, dance probs {probs_dance.shape}"
+        )
 
     np.savez_compressed(out_dir / "goldens.npz", **store)
 
@@ -234,32 +307,47 @@ def main() -> None:
         "models": model_meta,
         "front_end_specs": {
             "effnet": {
-                "component": "TensorflowInputEffnetDiscogs",
-                "recorded": spec_effnet,
+                "component": "TensorflowInputMusiCNN (shared with effnet predict)",
                 "constants_used": {
-                    "sampleRate": sr_effnet,
-                    "frameSize": frame_effnet,
-                    "hopSize": hop_effnet,
-                    "numberBands": bands_effnet,
-                    "patchSize": patch_effnet,
+                    "sampleRate": SAMPLE_RATE,
+                    "frameSize": FRAME_SIZE,
+                    "hopSize": HOP_SIZE,
+                    "numberBands": NUMBER_BANDS,
+                    "highFrequencyBound": HIGH_FREQUENCY_BOUND,
+                    "warpingFormula": WARPING_FORMULA,
+                    "weighting": WEIGHTING,
+                    "normalize": NORMALIZE,
+                    "bandsType": BANDS_TYPE,
+                    "windowType": WINDOW_TYPE,
+                    "windowNormalized": WINDOW_NORMALIZED,
+                    "shift": SHIFT,
+                    "scale": SCALE,
+                    "compression": COMPRESSION,
+                    "patchSize": EFFNET_PATCH_SPEC.patch_size,
+                    "patchHopSize": EFFNET_PATCH_SPEC.patch_hop_size,
+                    "lastPatchMode": EFFNET_PATCH_SPEC.last_patch_mode,
+                    "batchSize": BATCH_SIZE_EFFNET,
+                    "lastBatchMode": LAST_BATCH_MODE_EFFNET,
                 },
             },
             "musicnn": {
                 "component": "TensorflowInputMusiCNN",
-                "recorded": spec_musicnn,
                 "constants_used": {
-                    "sampleRate": sr_musicnn,
-                    "frameSize": frame_musicnn,
-                    "hopSize": hop_musicnn,
-                    "numberBands": bands_musicnn,
-                    "patchSize": patch_musicnn,
+                    "sampleRate": SAMPLE_RATE,
+                    "frameSize": FRAME_SIZE,
+                    "hopSize": HOP_SIZE,
+                    "numberBands": NUMBER_BANDS,
+                    "patchSize": MUSICNN_PATCH_SPEC.patch_size,
+                    "patchHopSize": MUSICNN_PATCH_SPEC.patch_hop_size,
+                    "lastPatchMode": MUSICNN_PATCH_SPEC.last_patch_mode,
                 },
             },
         },
+        "pooling": "mean over per-patch embeddings [n,1280] -> single 1280-d vector; heads run on the pooled vector",
         "clips": clip_meta,
         "patch_subsample": {
             "frames": PATCH_SUBSAMPLE_FRAMES,
-            "note": "strided subsample of first patch; full-patch sha256 in clips[].patch_*_sha256",
+            "note": "strided subsample of first patch; full-patch sha256 in clips[].patch_effnet_sha256",
         },
     }
     with open(out_dir / "goldens_meta.json", "w") as f:
