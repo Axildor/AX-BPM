@@ -30,7 +30,7 @@ jobs:
         run: |
           pip install --no-cache-dir \
             "tensorflow-cpu==2.20.0" \
-            "essentia-tensorflow==2.1b6.dev1110" \
+            "essentia-tensorflow==2.1b6.dev1389" \
             "onnxruntime>=1.19" \
             numpy scipy
 
