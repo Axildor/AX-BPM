@@ -7,8 +7,19 @@ before any integration proceeds.
 
 ## Verdict
 
-**PENDING** — see `onnx_equivalence_results.json` and
-`frontend_composition_results.json` after the next workflow run.
+**PASS** (workflow run 34717614049, 2026-09-12, commit 4651aa5)
+
+| Check | Result | Tolerance |
+|---|---|---|
+| Pooled embedding cosine (ONNX vs bs64 TF) | 0.99999994 – 1.00000012 | >= 0.999999 |
+| Pooled embedding max abs-diff | 3.4e-07 – 6.9e-06 | <= 1e-4 |
+| Moodtheme head prob max abs-diff | 3.2e-07 – 9.2e-07 | <= 1e-3 |
+| Danceability head prob max abs-diff | 2.4e-07 – 1.0e-06 | <= 1e-3 |
+| Mel patch 0 sha256 (composed vs reference) | exact match, all 4 clips | exact |
+| Log-mel subsample abs-diff | 0.0 (bit-exact) | <= 1e-3 |
+
+Per-clip details in `onnx_equivalence_results.json` and
+`frontend_composition_results.json`.
 
 ## How it works
 
