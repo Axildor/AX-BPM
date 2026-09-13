@@ -23,9 +23,8 @@ jobs:
         # (2026.06.0 action resolves but its builder image is "manifest unknown").
         uses: home-assistant/builder@2026.02.1
         with:
-          # --all is deprecated in builder >= 2025.x; the matrix arch maps
-          # 1:1 to the explicit platform flags (--amd64 / --aarch64).
+          # --all and --system are removed in builder >= 2025.x; the matrix
+          # arch maps 1:1 to the explicit platform flags (--amd64/--aarch64).
           args: |
             --${{ matrix.arch }} \
-            --system \
             /data
