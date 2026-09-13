@@ -19,7 +19,10 @@ FROM python:3.12-slim AS runtime
 WORKDIR /usr/src/axbpm
 COPY --from=wheelbuild /wheels /wheels
 COPY sidecar/requirements.txt sidecar/requirements.txt
-RUN pip install --no-cache-dir -r sidecar/requirements.txt && rm -rf /wheels
+# --find-links makes pip prefer the prebuilt miniaudio wheel over the PyPI
+# source tarball (no aarch64 wheels exist upstream).
+RUN pip install --no-cache-dir --find-links=/wheels -r sidecar/requirements.txt \
+    && rm -rf /wheels
 
 COPY sidecar/ax_bpm_sidecar sidecar/ax_bpm_sidecar
 COPY addon/run.sh addon/run.sh
