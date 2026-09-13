@@ -31,6 +31,12 @@ AX BPM resolves its tempo in this order:
    autocorrelation) provides the BPM, degrading octave gating to
    genre-only.
 
+> **Deezer coverage limitation**: Deezer's metadata BPM only covers the
+> part of its catalog that reports a non-zero `bpm` field — coverage is
+> incomplete and varies by release (many tracks report `bpm: 0`). The
+> local analysis tier exists precisely for this gap; a track with no
+> Deezer BPM and no decodable preview publishes `unknown`, never 0.
+
 On any failure the sensor goes `unknown` — it **never publishes 0**.
 
 ## Octave disambiguation (plain language)
@@ -73,6 +79,12 @@ essentia) that decodes the track preview once at 44.1 kHz, runs the
 aubio tempo detector on it, downsamples to 16 kHz, and returns `bpm`
 (+ `bpm_confidence`), mood scores, mood tags, and danceability in one
 response.
+
+**Image size**: the published add-on image is ≈ **526 MB (amd64)** /
+≈ **549 MB (aarch64)** uncompressed (dominated by the ONNX Runtime +
+scipy + numpy stack; no dev/test dependencies, no compiler, no model
+weights — models download to `/data` at first start). CI verifies the
+runtime image contains no dev dependencies on every build.
 
 **Install the add-on**
 1. Settings → Add-ons → ⋮ → *Repositories* → add this repository URL.

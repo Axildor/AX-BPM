@@ -1,0 +1,49 @@
+# AX BPM Analyzer — DEV image (Tier 2 iteration only — NEVER published).
+#
+# Split from addon/Dockerfile: the hassio addon-builder (2026.02.1, legacy
+# docker builder, no --target stage flag) builds the LAST stage of
+# addon/Dockerfile, so the dev stage previously leaked pytest/ruff/httpx +
+# the test suite (~28 MB) into the published "runtime" image. The runtime
+# Dockerfile now ends at the runtime stage; this file carries the dev
+# additions for local Tier 2 iteration:
+#
+#   docker build -f addon/Dockerfile.dev -t axbpm-analyzer-dev .
+#   docker run --rm -p 8099:8099 -v axbpm-models:/data \
+#     -e AXBPM_API_TOKEN=devtoken axbpm-analyzer-dev
+#
+# Keep the wheelbuild + runtime stages of the two files in sync.
+FROM python:3.12-slim AS wheelbuild
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip wheel --no-cache-dir miniaudio==1.71 -w /wheels
+# Same aubio build recipe as addon/Dockerfile (numpy + setuptools + wheel
+# BEFORE the wheel build; GCC 14 pointer-type warning downgraded).
+ENV CFLAGS="-Wno-error=incompatible-pointer-types"
+RUN pip install --no-cache-dir numpy==2.5.3 setuptools wheel \
+    && pip wheel --no-cache-dir --no-build-isolation aubio==0.4.9 -w /wheels
+
+FROM python:3.12-slim AS runtime
+
+WORKDIR /usr/src/axbpm
+COPY --from=wheelbuild /wheels /wheels
+COPY analyzer/requirements.txt analyzer/requirements.txt
+RUN pip install --no-cache-dir --find-links=/wheels -r analyzer/requirements.txt \
+    && rm -rf /wheels
+
+COPY analyzer/ax_bpm_analyzer analyzer/ax_bpm_analyzer
+COPY addon/run.sh addon/run.sh
+RUN chmod +x addon/run.sh
+
+ENV AXBPM_DATA_DIR=/data
+VOLUME /data
+EXPOSE 8099
+
+CMD ["python", "-m", "ax_bpm_analyzer.api"]
+
+# --- Dev additions (Tier 2 iteration only — never published) ----------------
+FROM runtime AS dev
+COPY analyzer/requirements-dev.txt analyzer/requirements-dev.txt
+RUN pip install --no-cache-dir -r analyzer/requirements-dev.txt
+COPY analyzer/tests analyzer/tests
+COPY pytest.ini pytest.ini

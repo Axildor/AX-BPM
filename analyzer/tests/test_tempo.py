@@ -68,7 +68,7 @@ class TestTempo:
         assert abs(bpm - 90.0) <= 2.0
 
     def test_silence_returns_none(self):
-        silence = np.zeros(int(44100 * 10), dtype=np.float32)
+        silence = np.zeros(44100 * 10, dtype=np.float32)
         assert tempo.estimate_bpm(silence) is None
 
     def test_too_short_returns_none(self):

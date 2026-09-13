@@ -5,7 +5,7 @@
 # of guessing. Port 8099 stays host-mapped for external-analyzer mode
 # (non-Supervisor installs reach it via homeassistant.local:8099).
 name: AX BPM Analyzer
-version: "1.0.0"
+version: "1.0.1"
 slug: ax_bpm_analyzer
 description: Tempo and mood analyzer for the AX BPM integration (aubio + ONNX)
 arch:

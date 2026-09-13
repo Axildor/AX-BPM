@@ -101,6 +101,18 @@ def test_analyze_413_over_cap(client, monkeypatch):
 def test_analyze_422_undecodable(client):
     resp = _post(client, b"not-audio-at-all")
     assert resp.status_code == 422
+    # The 422 body must carry a human-readable reason (contract: the
+    # detail payload names the failure class, not just the status code).
+    detail = resp.json()["detail"]
+    assert "undecodable audio" in detail
+    assert "not-audio-at-all" not in detail  # never echo raw upload bytes
+
+
+def test_analyze_422_empty_upload(client):
+    """Empty body → 422 with its own reason (distinct from undecodable)."""
+    resp = _post(client, b"")
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "empty upload"
 
 
 def test_analyze_503_busy(client, monkeypatch):

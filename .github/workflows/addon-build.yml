@@ -47,3 +47,50 @@ jobs:
             --test \
             --target addon-build-context \
             --docker-hub homeassistant
+
+  # Runtime-image hygiene probe: the hassio builder runs its build inside
+  # its own container, so the image is not inspectable on the runner after
+  # the build job. This job rebuilds the SAME addon/Dockerfile with plain
+  # docker (identical staging context) and asserts the published image
+  # contains NO dev dependencies (pytest/ruff/httpx) — the acceptance
+  # evidence for the stage-order fix. amd64 only (the dev-leak defect was
+  # arch-independent; aarch64 is covered by the build job above).
+  probe-runtime-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble self-contained build context
+        run: |
+          mkdir -p addon-build-context/addon
+          cp addon/Dockerfile addon-build-context/
+          cp addon/config.yaml addon-build-context/
+          cp addon/run.sh addon-build-context/addon/
+          cp -r analyzer addon-build-context/analyzer
+          cp pytest.ini addon-build-context/
+
+      - name: Build runtime image (amd64)
+        run: docker build -f addon/Dockerfile -t axbpm-probe:amd64 addon-build-context
+
+      - name: Record image size
+        run: docker image inspect axbpm-probe:amd64 --format '{{.Size}} bytes'
+
+      - name: Probe — dev deps must be ABSENT from the runtime image
+        run: |
+          set -e
+          echo "== pip list (runtime image) =="
+          docker run --rm axbpm-probe:amd64 pip list
+          echo "== asserting dev deps absent =="
+          if docker run --rm axbpm-probe:amd64 python -c "import pytest" 2>/dev/null; then
+            echo "DEFECT: pytest importable in the runtime image"; exit 1
+          fi
+          if docker run --rm axbpm-probe:amd64 python -c "import ruff" 2>/dev/null; then
+            echo "DEFECT: ruff importable in the runtime image"; exit 1
+          fi
+          if docker run --rm axbpm-probe:amd64 python -c "import httpx" 2>/dev/null; then
+            echo "DEFECT: httpx importable in the runtime image"; exit 1
+          fi
+          if docker run --rm axbpm-probe:amd64 test -d /usr/src/axbpm/analyzer/tests; then
+            echo "DEFECT: test suite present in the runtime image"; exit 1
+          fi
+          echo "PROBE PASS: no dev deps, no test suite in the runtime image"

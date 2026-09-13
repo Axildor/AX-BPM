@@ -1,7 +1,9 @@
 # AX BPM Analyzer — multi-stage build.
 # Runtime stage: python:3.12-slim (Debian/glibc) + pinned requirements ONLY.
-# Dev stage: adds requirements-dev.txt (pytest/httpx/ruff) for Tier 2
-# iteration (docker compose exec <analyzer-svc> pytest analyzer/tests).
+# This is the LAST stage: the hassio addon-builder (2026.02.1, legacy docker
+# builder, no --target stage flag) builds the final stage, so the published
+# image must end here. Dev/test dependencies live in addon/Dockerfile.dev —
+# keep the wheelbuild + runtime stages of the two files in sync.
 # NO essentia, NO TensorFlow — pure NumPy front end + ONNX Runtime.
 
 # Wheel-build stage: miniaudio ships no aarch64 wheels on PyPI, and aubio is
@@ -49,10 +51,3 @@ VOLUME /data
 EXPOSE 8099
 
 CMD ["python", "-m", "ax_bpm_analyzer.api"]
-
-# --- Dev target (Tier 2 iteration only — never published) -------------------
-FROM runtime AS dev
-COPY analyzer/requirements-dev.txt analyzer/requirements-dev.txt
-RUN pip install --no-cache-dir -r analyzer/requirements-dev.txt
-COPY analyzer/tests analyzer/tests
-COPY pytest.ini pytest.ini
