@@ -20,7 +20,12 @@ from ax_bpm.const import (
     OCTAVE_GENRE_ONLY,
     OCTAVE_OFF,
 )
-from ax_bpm.store import LEGACY_MOOD_FIELDS, BpmCache
+from ax_bpm.store import (
+    LEGACY_MOOD_FIELDS,
+    STORAGE_VERSION,
+    BpmCache,
+    MigratingStore,
+)
 
 # ---------------------------------------------------------------------------
 # AnalyzerClient — failure matrix
@@ -205,6 +210,65 @@ async def test_cache_migration_drops_legacy_mood_fields():
         assert field not in entry
     # Non-mood entry untouched.
     assert cache.get("hash:abc")["bpm"] == 120.0
+
+
+@pytest.mark.asyncio
+async def test_store_migrate_func_strips_legacy_fields_from_v1_data():
+    """The Store-level migration drops legacy mood fields from v1 data.
+
+    This is the path HA takes when the on-disk .storage/ax_bpm_cache
+    file was written as version 1 — without the override, HA's base
+    _async_migrate_func raises NotImplementedError and setup fails.
+    """
+    store = MigratingStore.__new__(MigratingStore)
+    v1_data = {
+        "isrc:GBDUW0000059": {
+            "bpm": 174.0,
+            "mood_scores": {"aggressive": 0.9},
+            "mood_label": "aggressive",
+            "track": "Daft Punk - Test Track",
+        },
+        "hash:abc": {"bpm": 120.0},
+        "not-a-dict": "junk",
+    }
+    migrated = await store._async_migrate_func(1, 1, v1_data)
+    assert migrated is v1_data  # mutated in place, passed through
+    entry = migrated["isrc:GBDUW0000059"]
+    assert entry["bpm"] == 174.0  # BPM kept
+    assert entry["track"] == "Daft Punk - Test Track"
+    for field in LEGACY_MOOD_FIELDS:
+        assert field not in entry
+    # Non-mood entry and non-dict value untouched.
+    assert migrated["hash:abc"] == {"bpm": 120.0}
+    assert migrated["not-a-dict"] == "junk"
+
+
+@pytest.mark.asyncio
+async def test_store_migrate_func_passes_through_current_version():
+    """Already-v2 data is returned unchanged (no legacy fields to strip)."""
+    store = MigratingStore.__new__(MigratingStore)
+    v2_data = {"isrc:GBDUW0000059": {"bpm": 174.0, "track": "Test"}}
+    migrated = await store._async_migrate_func(STORAGE_VERSION, 1, v2_data)
+    assert migrated == v2_data
+
+
+@pytest.mark.asyncio
+async def test_store_migrate_func_future_version_passthrough():
+    """A future on-disk version is passed through without mutation.
+
+    HA raises UnsupportedStorageVersionError before calling the migrate
+    func in that case, but the override must stay defensive.
+    """
+    store = MigratingStore.__new__(MigratingStore)
+    future_data = {
+        "isrc:GBDUW0000059": {
+            "bpm": 174.0,
+            "mood_scores": {"aggressive": 0.9},
+        }
+    }
+    migrated = await store._async_migrate_func(99, 1, future_data)
+    assert migrated is future_data
+    assert migrated["isrc:GBDUW0000059"]["mood_scores"] == {"aggressive": 0.9}
 
 
 @pytest.mark.asyncio

@@ -202,9 +202,16 @@ retry, the BPM sensor is unaffected.
   (genre+mood → "Genre + mood", genre-only → "Genre only", both off →
   "Off").
 - **Cache schema v1 → v2** — legacy Essentia SVM mood fields
-  (`mood_scores`, `mood_label`) are dropped on load; BPM fields are
-  kept (self-healing migration in
-  [`custom_components/ax_bpm/store.py`](custom_components/ax_bpm/store.py)).
+  (`mood_scores`, `mood_label`) are dropped and BPM fields are kept.
+  The migration runs at the Store level: a `Store` subclass overrides
+  `_async_migrate_func` in
+  [`custom_components/ax_bpm/store.py`](custom_components/ax_bpm/store.py),
+  so HA migrates a v1 `.storage/ax_bpm_cache` file BEFORE the data is
+  returned to the integration (and persists the migrated file). A
+  defense-in-depth sweep in `BpmCache.async_load` also strips any
+  legacy fields that survive. (Integration 2.1.0 shipped this migration
+  as a post-load sweep only, which crashed with `NotImplementedError`
+  when loading a v1 file — fixed in 3.0.1.)
 - **Old cache `source: "sidecar"` strings stay valid** — the sensor
   publishes whatever the cache holds; new writes use `analyzer`.
 

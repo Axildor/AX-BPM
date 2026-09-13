@@ -76,6 +76,10 @@ def _stub_homeassistant() -> None:
     class Store:  # replaced/mocked in tests; never instantiated here
         def __init__(self, *args, **kwargs):
             pass
+        def __class_getitem__(cls, item):
+            # Support Store[dict[str, Any]] subscripting (real HA Store is
+            # Generic); return the class itself so subclassing works.
+            return cls
     storage.Store = Store
 
 
