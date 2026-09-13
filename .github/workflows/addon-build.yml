@@ -9,6 +9,7 @@ on:
       - "addon/**"
       - "sidecar/**"
       - "repository.json"
+      - ".github/workflows/addon-build.yml"
 
 jobs:
   build:
