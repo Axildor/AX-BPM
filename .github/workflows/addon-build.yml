@@ -39,8 +39,11 @@ jobs:
         uses: home-assistant/builder@2026.02.1
         with:
           # Modern builder syntax: explicit platform flag + --target (the
-          # add-on directory name inside the repo, not a path).
+          # add-on directory name inside the repo, not a path). --test
+          # disables the Docker Hub push — CI validates the build only;
+          # publishing is a separate release flow with docker credentials.
           args: |
             --${{ matrix.arch }} \
+            --test \
             --target addon-build-context \
             --docker-hub homeassistant
