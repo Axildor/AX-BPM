@@ -80,8 +80,8 @@ aubio tempo detector on it, downsamples to 16 kHz, and returns `bpm`
 (+ `bpm_confidence`), mood scores, mood tags, and danceability in one
 response.
 
-**Image size**: the published add-on image is ≈ **526 MB (amd64)** /
-≈ **549 MB (aarch64)** uncompressed (dominated by the ONNX Runtime +
+**Image size**: the published add-on image is **516 MB (amd64)** /
+**539 MB (aarch64)** uncompressed (dominated by the ONNX Runtime +
 scipy + numpy stack; no dev/test dependencies, no compiler, no model
 weights — models download to `/data` at first start). CI verifies the
 runtime image contains no dev dependencies on every build.
