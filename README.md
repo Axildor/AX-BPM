@@ -1,13 +1,13 @@
-[![GitHub Release](https://img.shields.io/github/v/release/adix992/AX-BPM?style=flat-square)](https://github.com/adix992/AX-BPM/releases)
+[![GitHub Release](https://img.shields.io/github/v/release/Axildor/AX-BPM?style=flat-square)](https://github.com/Axildor/AX-BPM/releases)
 [![HACS Status](https://img.shields.io/badge/HACS-Custom-orange.svg?style=flat-square)](https://github.com/hacs/integration)
-[![Add-on Build](https://img.shields.io/github/actions/workflow/status/adix992/AX-BPM/addon-build.yml?branch=main&label=Add-on%20Build&style=flat-square)](https://github.com/adix992/AX-BPM/actions/workflows/addon-build.yml)
+[![Add-on Build](https://img.shields.io/github/actions/workflow/status/Axildor/AX-BPM/addon-build.yml?branch=main&label=Add-on%20Build&style=flat-square)](https://github.com/Axildor/AX-BPM/actions/workflows/addon-build.yml)
 [![Buy me a tea](https://img.shields.io/badge/Buy_me_a_tea-☕-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/axildor)
 
 # AX BPM for Home Assistant
 
 A custom Home Assistant integration that publishes a sensor holding the
 currently playing track's tempo (BPM). Built for the
-[AXiDOS Avatar Card](https://github.com/adix992/AXiDOS-Avatar-Card) dance
+[AXiDOS Avatar Card](https://github.com/Axildor/AXiDOS-Avatar-Card) dance
 engine, but works with any automation that needs a live BPM value.
 
 **All network requests are anonymous** — the Deezer public API needs no API

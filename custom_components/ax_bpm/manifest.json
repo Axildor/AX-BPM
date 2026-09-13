@@ -1,13 +1,13 @@
 {
   "domain": "ax_bpm",
   "name": "AX BPM",
-  "codeowners": ["@adix992"],
+  "codeowners": ["@Axildor"],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/adix992/AX-BPM",
+  "documentation": "https://github.com/Axildor/AX-BPM",
   "integration_type": "service",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/adix992/AX-BPM/issues",
+  "issue_tracker": "https://github.com/Axildor/AX-BPM/issues",
   "requirements": [],
   "version": "2.1.0"
 }
