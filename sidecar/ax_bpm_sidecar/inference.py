@@ -1,4 +1,4 @@
-"""ONNX inference: warm sessions, mean pooling, pinned tensor selection.
+"""ONNX inference + aubio tempo: warm sessions, mean pooling, pinned tensors.
 
 All sessions load once at startup and stay warm (~25 MB weights total —
 no load-on-demand). Tensor selection is by SHAPE (trailing dim 1280 =
@@ -9,6 +9,10 @@ loads by the PINNED graph-output index (config.MOODTHEME_PROB_OUTPUT_INDEX).
 mood_scores is ATOMIC: emitted only when all five mood heads are healthy —
 a missing head read as 0.0 would mean "maximally non-X" and bias octave
 gating toward intensity during partial failure.
+
+bpm is INDEPENDENT of that atomicity: tempo (aubio, on the 44.1 kHz
+buffer) and mood (ONNX, on the 16 kHz buffer) fail separately; a tempo
+failure omits bpm/bpm_confidence without touching mood_scores.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ import numpy as np
 
 from . import config as cfg
 from . import frontend
+from . import tempo
 from .models import ModelManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -125,8 +130,19 @@ class InferenceEngine:
             return None
         return candidates[0].reshape(-1)
 
-    def analyze(self, audio: np.ndarray) -> dict[str, Any] | None:
+    def analyze(
+        self,
+        audio: np.ndarray,
+        audio_44k: np.ndarray | None = None,
+        sr_44k: int | None = None,
+    ) -> dict[str, Any] | None:
         """Full analysis: front end → effnet → heads → payload dict.
+
+        audio: 16 kHz mono float32 (front end input spec).
+        audio_44k: 44.1 kHz mono float32 for the aubio tempo tier
+            (decode-once design — the API layer decodes at 44.1 kHz and
+            downsamples to 16 kHz for the front end). None → no tempo
+            in the payload (mood-only call, e.g. legacy clients).
 
         Returns None when effnet is unavailable (nothing can be computed).
         """
@@ -150,6 +166,16 @@ class InferenceEngine:
                 if self._models.is_loaded(name)
             },
         }
+
+        # Tempo tier — aubio on the 44.1 kHz buffer, independent of mood.
+        if audio_44k is not None and len(audio_44k) > 0:
+            tempo_result = tempo.estimate_bpm(audio_44k, sr_44k or 44100)
+            if tempo_result is not None:
+                bpm, confidence = tempo_result
+                payload["bpm"] = round(float(bpm), 2)
+                payload["bpm_confidence"] = round(float(confidence), 4)
+        # else/None: bpm omitted entirely — never 0 (the mood_scores
+        # atomicity philosophy applied to tempo).
 
         # mood_tags — attribute layer only (moodtheme PR-AUC 0.14).
         theme = self._head("moodtheme", pooled)

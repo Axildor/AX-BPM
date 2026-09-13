@@ -1,23 +1,25 @@
 """Per-track BPM resolution pipeline.
 
 Order: cache lookup → anonymous Deezer match (metadata bpm) → local
-analysis (aubio tempo + sidecar mood) → octave disambiguation → publish.
+analysis (sidecar tempo+mood when healthy → NumPy floor) → octave
+disambiguation → publish.
 
 Invariants:
 - Single-flight per track (no duplicate lookups).
 - Overall budget ~OVERALL_BUDGET seconds; on timeout publish from whatever
   stage completed, else unknown.
 - Never publish 0: failure → None (sensor shows unknown).
-- Mood correction only ever fires on the locally analyzed aubio estimate,
-  never on Deezer metadata bpm.
-- Graceful degradation: mood+genre → genre-only → raw.
+- Mood correction only ever fires on the locally analyzed estimate
+  (sidecar aubio or NumPy floor), never on Deezer metadata bpm.
+- Graceful degradation: sidecar(bpm+mood) → NumPy floor + genre-only → raw.
 - Mood-enabled cache miss downloads the 30 s preview ONCE (regardless of
   Deezer bpm) and reuses the same buffer for the local BPM fallback AND
   the sidecar call; discarded after.
-- Local path (bpm == 0): the sidecar call runs CONCURRENTLY with aubio,
-  bounded by min(remaining budget, MOOD_TIMEOUT), so the first publish is
-  already mood-corrected (user-approved deviation from the parent plan's
-  "mood never delays the publish" invariant — no BPM flip-flop).
+- Local path (bpm == 0): when the sidecar is healthy, ONE /analyze call
+  provides BOTH aubio bpm and mood_scores (decode-once design in the
+  sidecar); when it is not, the NumPy floor runs locally and the sidecar
+  mood call (if any) runs concurrently, bounded by min(remaining budget,
+  MOOD_TIMEOUT).
 - Deezer path (bpm > 0): publish immediately; mood enrichment is a
   separate post-publish step (async_enrich) the sensor triggers — mood
   never delays this publish (and cannot change the BPM anyway).
@@ -34,7 +36,7 @@ from collections.abc import Callable
 from typing import Any
 
 from . import math as bpm_math
-from .analyzer import AubioAnalyzer
+from .analyzer import NumpyAnalyzer
 from .const import (
     ANALYSIS_TIMEOUT,
     CONF_MOOD_ANALYZER_URL,
@@ -44,12 +46,12 @@ from .const import (
     OCTAVE_GENRE_MOOD,
     OCTAVE_OFF,
     OVERALL_BUDGET,
-    SOURCE_AUBIO,
     SOURCE_DEEZER,
     SOURCE_NUMPY,
+    SOURCE_SIDECAR,
 )
 from .deezer import DeezerClient, parse_artist_title
-from .mood_client import MoodClient
+from .sidecar_client import SidecarClient
 from .store import BpmCache, cache_key
 
 _LOGGER = logging.getLogger(__name__)
@@ -80,8 +82,8 @@ class BpmPipeline:
         self._hass = hass
         self._deezer = DeezerClient(session)
         self._cache = cache
-        self._aubio = AubioAnalyzer(options.get("aubio_binary"))
-        self._mood = MoodClient(
+        self._analyzer = NumpyAnalyzer()
+        self._sidecar = SidecarClient(
             session,
             options.get(CONF_MOOD_ANALYZER_URL),
             options.get(CONF_MOOD_API_TOKEN),
@@ -94,17 +96,17 @@ class BpmPipeline:
     async def async_setup(self) -> None:
         """Probe sidecar availability (never blocks the sensor)."""
         if self._octave_mode == OCTAVE_GENRE_MOOD:
-            self._mood_ready = await self._mood.async_detect() is not None
+            self._mood_ready = await self._sidecar.async_detect() is not None
             if not self._mood_ready:
                 _LOGGER.info(
-                    "Sidecar mood analyzer not detected — falling back to "
+                    "Sidecar analyzer not detected — falling back to "
                     "genre-only octave disambiguation"
                 )
 
     @property
-    def mood_client(self) -> MoodClient:
-        """Expose the mood client (sensor post-publish enrichment)."""
-        return self._mood
+    def sidecar_client(self) -> SidecarClient:
+        """Expose the sidecar client (sensor post-publish enrichment)."""
+        return self._sidecar
 
     @property
     def mood_enabled(self) -> bool:
@@ -161,7 +163,7 @@ class BpmPipeline:
         if not preview:
             return None
 
-        payload = await self._mood.async_analyze(preview)
+        payload = await self._sidecar.async_analyze(preview)
         if not payload:
             return None
 
@@ -402,33 +404,52 @@ class BpmPipeline:
             if not await self._deezer.download_preview(preview_url, tmp_path):
                 return None
 
-            # Run the tempo analyzer and (when enabled) the sidecar mood
-            # call CONCURRENTLY on the one preview. The sidecar timeout is
-            # bounded by the remaining budget so the first publish is
-            # already mood-corrected; a slow sidecar degrades to genre-only.
-            bpm_task = asyncio.ensure_future(self._aubio.get_bpm(self._hass, tmp_path))
-            mood_task = None
-            if self.mood_enabled and self._mood_ready:
-                mood_task = asyncio.ensure_future(
-                    self._mood.async_analyze_file(tmp_path)
-                )
+            # Two-tier local analysis on the one preview:
+            # 1. Sidecar healthy → ONE /analyze call returns BOTH the
+            #    aubio bpm and the atomic mood_scores (decode-once design
+            #    in the sidecar). Bounded by the remaining budget.
+            # 2. Sidecar down/unneeded → NumPy floor locally; mood call
+            #    (when enabled but tempo-less) runs concurrently.
             remaining = max(0.1, deadline - time.monotonic())
-            done, pending = await asyncio.wait(
-                {t for t in (bpm_task, mood_task) if t},
-                timeout=min(remaining, ANALYSIS_TIMEOUT * 2),
-            )
-            for task in pending:
-                task.cancel()
+            bpm_raw: float | None = None
+            mood_payload: dict[str, Any] | None = None
 
-            bpm_raw = bpm_task.result() if bpm_task in done else None
+            if self.mood_enabled and self._mood_ready:
+                sidecar_payload = await self._sidecar.async_analyze_file(
+                    tmp_path
+                )
+                if sidecar_payload:
+                    bpm_raw = sidecar_payload.get("bpm")
+                    mood_payload = sidecar_payload
+
+            if not bpm_raw or bpm_raw <= 0:
+                # Sidecar tempo unavailable (not installed, degraded, or
+                # tempo failed) → NumPy floor + optional concurrent mood.
+                mood_task = None
+                if self.mood_enabled and self._mood_ready and not mood_payload:
+                    mood_task = asyncio.ensure_future(
+                        self._sidecar.async_analyze_file(tmp_path)
+                    )
+                bpm_task = asyncio.ensure_future(
+                    self._analyzer.get_bpm(self._hass, tmp_path)
+                )
+                done, pending = await asyncio.wait(
+                    {t for t in (bpm_task, mood_task) if t},
+                    timeout=min(remaining, ANALYSIS_TIMEOUT * 2),
+                )
+                for task in pending:
+                    task.cancel()
+
+                bpm_raw = bpm_task.result() if bpm_task in done else None
+                mood_payload = (
+                    mood_task.result()
+                    if mood_task in done and not mood_task.cancelled()
+                    else None
+                )
+
             if not bpm_raw or bpm_raw <= 0:
                 return None
 
-            mood_payload = (
-                mood_task.result()
-                if mood_task in done and not mood_task.cancelled()
-                else None
-            )
             mood_scores = (
                 mood_payload.get("mood_scores") if mood_payload else None
             ) or self._scores_from_tags(mood_payload)
@@ -445,12 +466,11 @@ class BpmPipeline:
             mood_label = (
                 max(mood_scores, key=mood_scores.get) if mood_scores else None
             )
-            backend = getattr(self._aubio, "last_backend", None) or "aubio"
-            source = {
-                "aubio": SOURCE_AUBIO,
-                "aubio_cli": SOURCE_AUBIO,
-                "numpy": SOURCE_NUMPY,
-            }.get(backend, SOURCE_AUBIO)
+            source = (
+                SOURCE_SIDECAR
+                if mood_payload is not None and mood_payload.get("bpm")
+                else SOURCE_NUMPY
+            )
             result = ResolutionResult(
                 disambiguated["bpm"],
                 source=source,

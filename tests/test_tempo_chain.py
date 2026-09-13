@@ -1,4 +1,8 @@
-"""Tests for the local tempo analysis chain (tempo_numpy, decode, analyzer)."""
+"""Tests for the local tempo analysis chain (tempo_numpy, decode, analyzer).
+
+Since the aubio tempo tier moved into the sidecar, the integration's
+local analyzer is the NumPy floor only (NumpyAnalyzer).
+"""
 
 from __future__ import annotations
 
@@ -8,7 +12,7 @@ import wave
 from pathlib import Path
 
 import numpy as np
-from ax_bpm.analyzer import AubioAnalyzer, aubio_available
+from ax_bpm.analyzer import NumpyAnalyzer, analyzer_available
 from ax_bpm.decode import decode_available, decode_mono
 from ax_bpm.tempo_numpy import estimate_bpm
 
@@ -123,22 +127,22 @@ class TestDecodeChain:
 
 
 class TestAnalyzerChain:
-    def test_aubio_available_with_decoder(self):
-        assert aubio_available(None) is True
+    def test_analyzer_available_with_decoder(self):
+        assert analyzer_available() is True
 
     def test_chain_returns_bpm_and_backend(self):
         wav = _make_click_wav(128)
         mp3 = _wav_to_mp3(wav)
         try:
-            analyzer = AubioAnalyzer()
+            analyzer = NumpyAnalyzer()
             bpm = analyzer._analyze_sync(mp3)
             assert bpm is not None
             assert 120 <= bpm <= 140
-            assert analyzer.last_backend in {"aubio", "aubio_cli", "numpy"}
+            assert analyzer.last_backend == "numpy"
         finally:
             Path(wav).unlink(missing_ok=True)
         Path(mp3).unlink(missing_ok=True)
 
     def test_chain_on_missing_file(self):
-        analyzer = AubioAnalyzer()
+        analyzer = NumpyAnalyzer()
         assert analyzer._analyze_sync("/nonexistent/file.mp3") is None

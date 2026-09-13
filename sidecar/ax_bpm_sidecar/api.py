@@ -21,9 +21,10 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from . import config as cfg
-from .decode import decode
+from .decode import decode, downsample
 from .inference import InferenceEngine
 from .models import ModelManager
+from . import tempo
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -94,6 +95,7 @@ async def health() -> JSONResponse:
         {
             "status": state.models.status,
             "models_loaded": state.models.states,
+            "tempo_available": tempo.aubio_available(),
         }
     )
 
@@ -136,19 +138,25 @@ async def analyze(request: Request, file: UploadFile = _FILE_PARAM) -> JSONRespo
 
 
 def _analyze_sync(data: bytes) -> dict | None:
-    """Blocking analysis (runs in a worker thread via asyncio.to_thread)."""
-    decoded = decode(data)
+    """Blocking analysis (runs in a worker thread via asyncio.to_thread).
+
+    Decode-once design: decode at 44.1 kHz (aubio tempo's preferred
+    rate — parity with the integration's former in-core aubio path),
+    run tempo on it, downsample to 16 kHz for the ONNX front end.
+    """
+    decoded = decode(data, sample_rate=44100)
     if decoded is None:
         raise ValueError("no decoder could handle the input")
-    samples, sr = decoded
-    if sr != cfg.SAMPLE_RATE:
-        raise ValueError(f"decoder returned {sr} Hz, expected {cfg.SAMPLE_RATE}")
+    samples_44k, sr = decoded
 
-    # Post-decode truncation (latency guard on aarch64).
-    max_samples = int(cfg.MAX_ANALYZE_SECONDS * cfg.SAMPLE_RATE)
-    if len(samples) > max_samples:
-        samples = samples[:max_samples]
-    return state.engine.analyze(samples)
+    # Post-decode truncation (latency guard on aarch64) — applied at the
+    # 44.1 kHz rate so both consumers see the same time window.
+    max_samples_44k = int(cfg.MAX_ANALYZE_SECONDS * 44100)
+    if len(samples_44k) > max_samples_44k:
+        samples_44k = samples_44k[:max_samples_44k]
+
+    samples = downsample(samples_44k, sr)
+    return state.engine.analyze(samples, audio_44k=samples_44k, sr_44k=sr)
 
 
 def main() -> None:

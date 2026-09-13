@@ -9,8 +9,8 @@ Phase 1: BPM publishes first (unchanged path). On the Deezer-metadata
 path the sensor then triggers the pipeline's post-publish mood
 enrichment; when the sidecar responds, mood attributes arrive as a
 second `async_write_ha_state`. The local-analysis path already carries
-mood attributes in the first publish (sidecar ran concurrently with
-aubio).
+mood attributes in the first publish (sidecar tempo+mood in one call,
+or NumPy floor with a concurrent mood call).
 """
 
 from __future__ import annotations

@@ -10,3 +10,7 @@ uvicorn==0.52.4
 python-multipart==0.0.32
 miniaudio==1.71
 soundfile==0.14.0
+# aubio: source-only on PyPI (no wheels) — built to a wheel in the addon
+# Dockerfile wheelbuild stage; consumed there via --find-links. Tempo
+# detection (specdiff) on pre-decoded samples; never aubio.source.
+aubio==0.4.9

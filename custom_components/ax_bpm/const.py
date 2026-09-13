@@ -12,7 +12,6 @@ NAME = "AX BPM"
 # Configuration keys (config flow + options flow)
 # ---------------------------------------------------------------------------
 CONF_MEDIA_PLAYER = "media_player"
-CONF_AUBIO_BINARY = "aubio_binary"
 
 # Octave disambiguation mode (single dropdown, replaces the legacy
 # genre_correction / mood_correction toggle pair).
@@ -29,9 +28,11 @@ CONF_MOOD_ANALYZER_URL = "mood_analyzer_url"
 # Octave disambiguation — core tunables (see math.py for the decision order)
 # ---------------------------------------------------------------------------
 
-# Raw aubio readings in [65, 110) where the real tempo might be 2x raw.
+# Raw local-analyzer readings in [65, 110) where the real tempo might be
+# 2x raw (NumPy floor or sidecar aubio — both feed the same gate).
 LOW_WINDOW = (65.0, 110.0)
-# Raw aubio readings in (150, 200] where the real tempo might be raw / 2.
+# Raw local-analyzer readings in (150, 200] where the real tempo might be
+# raw / 2.
 HIGH_WINDOW = (150.0, 200.0)
 
 # Intensity threshold to double a low reading (mood path).
@@ -55,7 +56,7 @@ SLOW_GENRES = frozenset({
 # Timeouts / budgets (seconds)
 # ---------------------------------------------------------------------------
 NETWORK_TIMEOUT = 10.0        # per Deezer HTTP request
-ANALYSIS_TIMEOUT = 15.0       # per analyzer (aubio)
+ANALYSIS_TIMEOUT = 15.0       # per local analyzer (NumPy floor)
 # Per sidecar mood request (hard, single attempt). 25 s: aarch64 inference
 # can exceed 8 s; mood is fully async post-publish on the Deezer path, and
 # the local path stays bounded by OVERALL_BUDGET.
@@ -82,10 +83,9 @@ DECODE_SAMPLE_RATE = 22050
 PLATFORMS = ["sensor"]
 UNIT_BPM = "BPM"
 SOURCE_DEEZER = "deezer_metadata"
-SOURCE_AUBIO = "aubio"
+SOURCE_SIDECAR = "sidecar"
 SOURCE_NUMPY = "numpy"
 SOURCE_CACHE = "cache"
-SOURCE_SIDECAR = "sidecar"
 
 # Sidecar mood analyzer (Phase 2 add-on) endpoints.
 # Auto-detect order: add-on internal hostname → homeassistant.local →

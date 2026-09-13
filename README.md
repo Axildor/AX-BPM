@@ -23,11 +23,13 @@ AX BPM resolves its tempo in this order:
    If Deezer reports a BPM, it is published as-is.
 3. **Local analysis** — Deezer frequently reports `bpm: 0` even for
    top-tier catalog. In that case AX BPM downloads the track's ~30 s
-   preview once and runs the **aubio** tempo analyzer on it (60 / median
-   inter-beat interval). When octave disambiguation is set to
-   "Genre + mood", the same preview is POSTed to the sidecar mood
-   analyzer concurrently, so the first published BPM is already
-   mood-corrected.
+   preview once and analyzes it locally. With the **sidecar add-on**
+   installed, ONE `/analyze` call returns both the **aubio** tempo
+   (60 / median inter-beat interval) and the mood scores, so the first
+   published BPM is already mood-corrected. Without the sidecar, a
+   built-in **NumPy** tempo estimator (spectral-flux onsets +
+   autocorrelation) provides the BPM, degrading octave gating to
+   genre-only.
 
 On any failure the sensor goes `unknown` — it **never publishes 0**.
 
@@ -64,11 +66,14 @@ locally analyzed estimate.
 1. Copy `custom_components/ax_bpm` into your `config/custom_components`.
 2. Restart Home Assistant.
 
-## Sidecar add-on (mood analysis)
+## Sidecar add-on (tempo + mood analysis)
 
-Mood analysis runs in the **AX BPM sidecar** add-on — a small FastAPI +
-ONNX Runtime service (no TensorFlow, no essentia) that analyzes the
-track preview and returns mood scores, mood tags, and danceability.
+Tempo (aubio-grade) and mood analysis both run in the **AX BPM sidecar**
+add-on — a small FastAPI + ONNX Runtime service (no TensorFlow, no
+essentia) that decodes the track preview once at 44.1 kHz, runs the
+aubio tempo detector on it, downsamples to 16 kHz, and returns `bpm`
+(+ `bpm_confidence`), mood scores, mood tags, and danceability in one
+response.
 
 **Install the add-on**
 1. Settings → Add-ons → ⋮ → *Repositories* → add this repository URL.
@@ -95,6 +100,9 @@ track preview and returns mood scores, mood tags, and danceability.
 
 **What the sidecar returns**
 
+- `bpm` + `bpm_confidence` — aubio tempo on the 44.1 kHz preview
+  (independent of mood: a tempo failure omits these without touching
+  `mood_scores`, and vice versa).
 - `mood_scores` — five signals (`aggressive`, `party`, `relaxed`,
   `electronic`, `acoustic`) from dedicated ONNX mood heads. This object
   is **atomic**: it is emitted only when all five heads are healthy, and
@@ -118,9 +126,8 @@ Settings → Devices & Services → **Add Integration** → **AX BPM**:
 | --- | --- |
 | Media player | The `media_player` entity to track (required). |
 | Octave disambiguation | One dropdown: **Off** / **Genre only** / **Genre + mood** (default: Genre only). "Genre + mood" needs the AX BPM sidecar add-on and degrades to genre-only while it is unreachable. |
-| Sidecar mood analyzer URL | Optional manual override. Leave empty to auto-detect (add-on internal hostname, then `homeassistant.local:8099`). |
+| Sidecar analyzer URL | Optional manual override. Leave empty to auto-detect (add-on internal hostname, then `homeassistant.local:8099`). |
 | Sidecar API token | Shared secret matching the add-on's `api_token`. Required when the add-on has a token set. |
-| External aubio binary | Path to an `aubio` CLI binary, used when the Python package is missing. |
 
 The setup form shows a connection status line with the sidecar
 auto-detect result. Existing installs with the legacy genre/mood toggles
@@ -130,10 +137,10 @@ mood", genre-only → "Genre only", both off → "Off").
 ## Sensor
 
 `sensor.ax_bpm` — state is the final BPM (unit `BPM`, measurement class).
-Attributes include the source (`deezer_metadata` / `aubio` / `cache`),
-track name, ISRC, Deezer track id, match rank, the pre-correction raw BPM,
-album genre, mood scores, intensity/calmness, the octave rule applied, and
-the last update time.
+Attributes include the source (`deezer_metadata` / `sidecar` / `numpy` /
+`cache`), track name, ISRC, Deezer track id, match rank, the
+pre-correction raw BPM, album genre, mood scores, intensity/calmness, the
+octave rule applied, and the last update time.
 
 When the sidecar mood analyzer responds (Deezer-metadata path, or the
 concurrent local path), additional mood attributes are published:
@@ -157,14 +164,16 @@ autocorrelation) decodes previews via the `ffmpeg` binary that ships with
 official Home Assistant images (or the `miniaudio`/`soundfile` wheels when
 installed).
 
-Optional accuracy upgrades, picked up automatically when importable:
+The analyzer is a **two-tier design**:
 
-- `aubio` (Python package, or any external `aubio` CLI binary) — tempo.
+1. **Sidecar add-on (premium tier)** — when installed and reachable, ONE
+   `/analyze` call provides aubio-grade tempo AND mood in a single
+   request (source attribute: `sidecar`).
+2. **Built-in NumPy floor (basic tier)** — always available, no compiled
+   dependencies (source attribute: `numpy`).
 
-The analyzer chain is aubio → aubio CLI → built-in NumPy; the first
-backend that produces a BPM wins (shown in the sensor's source attribute
-as `aubio` or `numpy`). A missing analyzer never delays or blocks the
-sensor.
+A missing analyzer never delays or blocks the sensor. aubio lives
+exclusively inside the sidecar add-on — the integration never imports it.
 
 Mood analysis is provided by the **AX BPM sidecar add-on** (ONNX-based,
 no TensorFlow in Home Assistant). When the sidecar is unreachable, mood

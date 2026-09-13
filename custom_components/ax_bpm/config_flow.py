@@ -16,7 +16,6 @@ from homeassistant.core import callback
 from homeassistant.helpers import aiohttp_client, selector
 
 from .const import (
-    CONF_AUBIO_BINARY,
     CONF_MEDIA_PLAYER,
     CONF_MOOD_ANALYZER_URL,
     CONF_MOOD_API_TOKEN,
@@ -28,7 +27,7 @@ from .const import (
     OCTAVE_MODES,
     OCTAVE_OFF,
 )
-from .mood_client import MoodClient
+from .sidecar_client import SidecarClient
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,9 +80,6 @@ def _build_schema(defaults: dict, sidecar_detected: bool) -> vol.Schema:
             default=defaults.get(CONF_MOOD_ANALYZER_URL, ""),
         ): str,
         vol.Optional(
-            CONF_AUBIO_BINARY, default=defaults.get(CONF_AUBIO_BINARY, "")
-        ): str,
-        vol.Optional(
             CONF_MOOD_API_TOKEN,
             default=defaults.get(CONF_MOOD_API_TOKEN, ""),
         ): str,
@@ -118,7 +114,7 @@ class AxBpmOptionsHandler(config_entries.OptionsFlow):
 
     async def _probe_sidecar(self, current: dict) -> bool:
         """One-shot health probe for the connection status line."""
-        client = MoodClient(
+        client = SidecarClient(
             aiohttp_client.async_get_clientsession(self.hass),
             current.get(CONF_MOOD_ANALYZER_URL),
         )
@@ -156,7 +152,7 @@ class AxBpmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _probe_sidecar(self, current: dict) -> bool:
         """One-shot health probe for the connection status line."""
-        client = MoodClient(
+        client = SidecarClient(
             aiohttp_client.async_get_clientsession(self.hass),
             current.get(CONF_MOOD_ANALYZER_URL),
         )

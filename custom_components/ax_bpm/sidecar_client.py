@@ -1,13 +1,18 @@
-"""Sidecar mood analyzer client (Phase 1 — integration side).
+"""Sidecar analyzer client (tempo + mood) — integration side.
 
-Talks HTTP to the AX BPM sidecar add-on (Phase 2): `POST /analyze` with a
-multipart preview buffer, `GET /health` for per-model state.
+Talks HTTP to the AX BPM sidecar add-on: `POST /analyze` with a
+multipart preview buffer, `GET /health` for per-model state + tempo
+availability. Since the aubio tempo tier moved into the sidecar, ONE
+/analyze call returns BOTH the aubio `bpm` (+ `bpm_confidence`) and the
+atomic `mood_scores` — the pipeline's local path makes a single call
+when the sidecar is healthy.
 
 Contract (from the parent plan):
 - Hard timeout, single attempt, NO retry. Any failure returns None —
   never raises into the pipeline.
 - URL auto-detect order: add-on internal hostname →
-  `http://homeassistant.local:8099` → manual `mood_analyzer_url` override.
+  `http://homeassistant.local:8099` → manual `mood_analyzer_url`
+  override (config key kept for migration-free compat).
 - Empty manual URL = auto-detect only; feature fully off when the mode
   dropdown excludes mood.
 """
@@ -39,8 +44,8 @@ def _read_file(path: str) -> bytes:
         return fh.read()
 
 
-class MoodClient:
-    """Async client for the sidecar mood analyzer service.
+class SidecarClient:
+    """Async client for the sidecar analyzer service (tempo + mood).
 
     /analyze carries an optional Bearer shared-secret token (set the same
     token in the add-on config and the integration options); /health stays
@@ -82,19 +87,20 @@ class MoodClient:
         for url in candidates:
             if await self._async_health(url):
                 self._resolved_url = url
-                _LOGGER.info("AX BPM: sidecar mood analyzer detected at %s", url)
+                _LOGGER.info("AX BPM: sidecar analyzer detected at %s", url)
                 return url
         self._resolved_url = None
         if self._manual_url:
             _LOGGER.info(
-                "AX BPM: sidecar mood analyzer not reachable at %s — mood "
-                "attributes disabled (genre-only octave disambiguation)",
+                "AX BPM: sidecar analyzer not reachable at %s — mood "
+                "attributes disabled and local tempo degrades to the "
+                "NumPy floor",
                 self._manual_url,
             )
         else:
             _LOGGER.info(
-                "AX BPM: sidecar mood analyzer not detected — mood "
-                "attributes disabled (genre-only octave disambiguation)"
+                "AX BPM: sidecar analyzer not detected — mood attributes "
+                "disabled and local tempo degrades to the NumPy floor"
             )
         return None
 
@@ -133,8 +139,9 @@ class MoodClient:
     async def async_analyze(self, preview: bytes) -> dict[str, Any] | None:
         """POST the preview buffer to /analyze (multipart field "file").
 
-        Returns the mood payload dict on success, None on any failure
-        (timeout, HTTP error, 5xx, unreachable). Single attempt, no retry.
+        Returns the payload dict (bpm + bpm_confidence + mood_scores +
+        tags) on success, None on any failure (timeout, HTTP error, 5xx,
+        unreachable). Single attempt, no retry.
         """
         base = self._resolved_url or self._manual_url
         if not base:

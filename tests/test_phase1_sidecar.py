@@ -1,6 +1,6 @@
-"""Phase 1 tests: mood_client, cache v1→v2 migration, config-flow migration.
+"""Phase 1 tests: sidecar_client, cache v1→v2 migration, config-flow migration.
 
-mood_client mock matrix (parent plan Phase 3 item 1):
+sidecar_client mock matrix (parent plan Phase 3 item 1):
 - healthy / slow (timeout) / HTTP 500 / unreachable — the client returns
   None in every failure mode and never raises.
 Cache migration: legacy SVM mood fields dropped, BPM kept.
@@ -19,17 +19,17 @@ from ax_bpm.const import (
     OCTAVE_GENRE_ONLY,
     OCTAVE_OFF,
 )
-from ax_bpm.mood_client import MoodClient
+from ax_bpm.sidecar_client import SidecarClient
 from ax_bpm.store import LEGACY_MOOD_FIELDS, BpmCache
 
 # ---------------------------------------------------------------------------
-# MoodClient — failure matrix
+# SidecarClient — failure matrix
 # ---------------------------------------------------------------------------
 
 
-def _make_client(manual_url: str | None = None) -> tuple[MoodClient, MagicMock]:
+def _make_client(manual_url: str | None = None) -> tuple[SidecarClient, MagicMock]:
     session = MagicMock()
-    return MoodClient(session, manual_url), session
+    return SidecarClient(session, manual_url), session
 
 
 def _resp(status: int, body=None):

@@ -9,8 +9,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 
-from .analyzer import aubio_available
-from .const import CONF_AUBIO_BINARY, CONF_MEDIA_PLAYER, DOMAIN, PLATFORMS
+from .analyzer import analyzer_available
+from .const import CONF_MEDIA_PLAYER, DOMAIN, PLATFORMS
 from .pipeline import BpmPipeline
 from .store import BpmCache
 
@@ -22,11 +22,11 @@ ISSUE_NO_ANALYZER = "no_tempo_analyzer"
 def _update_analyzer_issue(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Create/clear a repair issue for the missing tempo analyzer.
 
-    With the built-in NumPy estimator + ffmpeg decode chain, local analysis
-    is almost always available; this issue now only fires when no decoder
-    and no analyzer exist at all (e.g. ffmpeg missing and no wheels).
+    With the built-in NumPy estimator + decode chain, local analysis is
+    available whenever any decoder exists; this issue only fires when no
+    decoder is importable at all (e.g. no ffmpeg and no wheels).
     """
-    if aubio_available(entry.options.get(CONF_AUBIO_BINARY)):
+    if analyzer_available():
         ir.async_delete_issue(hass, DOMAIN, ISSUE_NO_ANALYZER)
     else:
         ir.async_create_issue(

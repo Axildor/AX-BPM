@@ -4,15 +4,25 @@
 # iteration (docker compose exec <sidecar-svc> pytest sidecar/tests).
 # NO essentia, NO TensorFlow — pure NumPy front end + ONNX Runtime.
 
-# Wheel-build stage: miniaudio ships no aarch64 wheels on PyPI, so on arm64
-# pip must compile it from source (needs a C++ toolchain). Build the wheel
-# here with build-essential, then install the prebuilt wheel into the slim
+# Wheel-build stage: miniaudio ships no aarch64 wheels on PyPI, and aubio is
+# source-only for ALL platforms (no wheels at all), so on any arch pip must
+# compile them from source (needs a C/C++ toolchain; aubio also wants libav
+# headers only when its own file decoding is used — NOT our case: we feed
+# pre-decoded samples, so no ffmpeg/libav linkage). Build the wheels here
+# with build-essential, then install the prebuilt wheels into the slim
 # runtime stage so the compiler never ships in the published image.
 FROM python:3.12-slim AS wheelbuild
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 RUN pip wheel --no-cache-dir miniaudio==1.71 -w /wheels
+# aubio 0.4.9 builds via setup.py + distutils build_ext (NOT waf — waf
+# only builds the standalone libaubio we never link). Its C extension
+# includes numpy/arrayobject.h unconditionally, and python:3.12 ships no
+# setuptools — so --no-build-isolation requires setuptools + wheel + the
+# pinned numpy present IN the stage before the aubio wheel build.
+RUN pip install --no-cache-dir numpy==2.5.3 setuptools wheel \
+    && pip wheel --no-cache-dir --no-build-isolation aubio==0.4.9 -w /wheels
 
 FROM python:3.12-slim AS runtime
 
