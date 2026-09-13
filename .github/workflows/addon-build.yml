@@ -27,6 +27,7 @@ jobs:
         run: |
           mkdir -p addon-build-context/addon
           cp addon/Dockerfile addon-build-context/
+          cp addon/config.yaml addon-build-context/
           cp addon/run.sh addon-build-context/addon/
           cp -r sidecar addon-build-context/sidecar
           cp pytest.ini addon-build-context/
