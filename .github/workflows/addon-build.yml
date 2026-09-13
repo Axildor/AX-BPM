@@ -18,6 +18,19 @@ jobs:
         arch: [amd64, aarch64]
     steps:
       - uses: actions/checkout@v4
+
+      # The hassio builder uses the --target dir as the docker build
+      # context, but addon/Dockerfile COPYs repo-root-relative paths
+      # (sidecar/, addon/run.sh, pytest.ini). Assemble a self-contained
+      # staging dir replicating that layout.
+      - name: Assemble self-contained build context
+        run: |
+          mkdir -p addon-build-context/addon
+          cp addon/Dockerfile addon-build-context/
+          cp addon/run.sh addon-build-context/addon/
+          cp -r sidecar addon-build-context/sidecar
+          cp pytest.ini addon-build-context/
+
       - name: Build ${{ matrix.arch }}
         # 2026.02.1 = latest release whose ghcr.io builder image exists
         # (2026.06.0 action resolves but its builder image is "manifest unknown").
@@ -27,5 +40,5 @@ jobs:
           # add-on directory name inside the repo, not a path).
           args: |
             --${{ matrix.arch }} \
-            --target addon \
+            --target addon-build-context \
             --docker-hub homeassistant
