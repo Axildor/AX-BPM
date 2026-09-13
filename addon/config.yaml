@@ -1,23 +1,24 @@
-# AX-BPM Sidecar add-on configuration.
-# Port 8099 is host-mapped BY DEFAULT: the dev probe name
-# ax-bpm-sidecar:8099 only resolves in compose; production relies on
-# homeassistant.local:8099 via the mapped port.
-name: AX-BPM Sidecar
+# AX BPM Analyzer add-on configuration.
+# The add-on announces itself to Home Assistant via the Supervisor
+# discovery API (POST /services/discovery, service "ax_bpm") at startup,
+# so the integration learns the real resolvable hostname + port instead
+# of guessing. Port 8099 stays host-mapped for external-analyzer mode
+# (non-Supervisor installs reach it via homeassistant.local:8099).
+name: AX BPM Analyzer
 version: "1.0.0"
-slug: ax-bpm-sidecar
-description: Mood analyzer sidecar for the AX BPM integration (ONNX, no essentia)
+slug: ax_bpm_analyzer
+description: Tempo and mood analyzer for the AX BPM integration (aubio + ONNX)
 arch:
   - amd64
   - aarch64
 init: false
 startup: services
 boot: auto
-hassio_api: false
+# hassio_api: required for the Supervisor discovery POST at startup.
+hassio_api: true
 homeassistant_api: false
 ports:
   8099/tcp: 8099
-map:
-  - share:rw
 options:
   api_token: ""
   max_analyze_seconds: 60
@@ -26,4 +27,4 @@ schema:
   api_token: str?
   max_analyze_seconds: int(5,300)?
   intra_op_threads: int(1,8)?
-image: ghcr.io/axildor/ax-bpm-{arch}-sidecar
+image: ghcr.io/axildor/ax-bpm-{arch}-analyzer

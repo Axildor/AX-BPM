@@ -1,6 +1,6 @@
 """Tests for the local tempo analysis chain (tempo_numpy, decode, analyzer).
 
-Since the aubio tempo tier moved into the sidecar, the integration's
+Since the aubio tempo tier moved into the analyzer add-on, the integration's
 local analyzer is the NumPy floor only (NumpyAnalyzer).
 """
 

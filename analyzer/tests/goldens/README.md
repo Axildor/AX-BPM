@@ -1,7 +1,7 @@
-# Phase 0 — Golden Validation (AX-BPM sidecar gate)
+# Phase 0 — Golden Validation (AX BPM Analyzer gate)
 
 This directory contains the Phase 0 golden-validation harness for the
-AX-BPM sidecar mood analyzer. It gates ALL sidecar work: the ONNX
+AX BPM Analyzer mood analyzer. It gates ALL analyzer work: the ONNX
 inference path must reproduce the TensorFlow reference path bit-closely
 before any integration proceeds.
 
@@ -102,7 +102,7 @@ output name — `PartitionedCall:1` may not survive ONNX export.
 | Mel patch 0 sha256 (composed vs reference) | exact match |
 | Log-mel subsample abs-diff | <= 1e-3 |
 
-A FAIL on any criterion stops all sidecar work.
+A FAIL on any criterion stops all analyzer work.
 
 ## Model URLs
 

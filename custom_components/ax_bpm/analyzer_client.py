@@ -1,18 +1,17 @@
-"""Sidecar analyzer client (tempo + mood) — integration side.
+"""AX BPM Analyzer client (tempo + mood) — integration side.
 
-Talks HTTP to the AX BPM sidecar add-on: `POST /analyze` with a
+Talks HTTP to the AX BPM Analyzer add-on: `POST /analyze` with a
 multipart preview buffer, `GET /health` for per-model state + tempo
-availability. Since the aubio tempo tier moved into the sidecar, ONE
-/analyze call returns BOTH the aubio `bpm` (+ `bpm_confidence`) and the
-atomic `mood_scores` — the pipeline's local path makes a single call
-when the sidecar is healthy.
+availability. ONE /analyze call returns BOTH the aubio `bpm`
+(+ `bpm_confidence`) and the atomic `mood_scores` — the pipeline's local
+path makes a single call when the analyzer is healthy.
 
 Contract (from the parent plan):
 - Hard timeout, single attempt, NO retry. Any failure returns None —
   never raises into the pipeline.
-- URL auto-detect order: add-on internal hostname →
-  `http://homeassistant.local:8099` → manual `mood_analyzer_url`
-  override (config key kept for migration-free compat).
+- URL auto-detect order: manual `analyzer_url` override → discovered URL
+  (HA-native Supervisor discovery) → `http://homeassistant.local:8099`
+  fallback (external-analyzer mode).
 - Empty manual URL = auto-detect only; feature fully off when the mode
   dropdown excludes mood.
 """
@@ -26,10 +25,10 @@ from typing import Any
 import aiohttp
 
 from .const import (
-    MOOD_TIMEOUT,
-    SIDECAR_ANALYZE_PATH,
-    SIDECAR_HEALTH_PATH,
-    SIDECAR_URLS,
+    ANALYZE_PATH,
+    ANALYZER_TIMEOUT,
+    ANALYZER_URLS,
+    HEALTH_PATH,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,8 +43,8 @@ def _read_file(path: str) -> bytes:
         return fh.read()
 
 
-class SidecarClient:
-    """Async client for the sidecar analyzer service (tempo + mood).
+class AnalyzerClient:
+    """Async client for the AX BPM Analyzer service (tempo + mood).
 
     /analyze carries an optional Bearer shared-secret token (set the same
     token in the add-on config and the integration options); /health stays
@@ -57,23 +56,26 @@ class SidecarClient:
         session: aiohttp.ClientSession,
         manual_url: str | None,
         api_token: str | None = None,
+        discovered_url: str | None = None,
     ) -> None:
         self._session = session
         self._manual_url = (manual_url or "").strip().rstrip("/") or None
+        self._discovered_url = (discovered_url or "").strip().rstrip("/") or None
         self._api_token = (api_token or "").strip() or None
         self._resolved_url: str | None = None
         self._probed = False
 
     @property
     def base_url(self) -> str | None:
-        """The resolved sidecar base URL, or None when not detected."""
+        """The resolved analyzer base URL, or None when not detected."""
         return self._resolved_url
 
     async def async_detect(self) -> str | None:
-        """Resolve the sidecar URL once. Manual override wins when set.
+        """Resolve the analyzer URL once.
 
-        Auto-detect order: manual URL → add-on internal hostname →
-        homeassistant.local. Returns the working base URL or None.
+        Auto-detect order: manual override → discovered URL (Supervisor
+        discovery) → homeassistant.local fallback. Returns the working
+        base URL or None.
         """
         if self._probed:
             return self._resolved_url
@@ -82,25 +84,26 @@ class SidecarClient:
         candidates: list[str] = []
         if self._manual_url:
             candidates.append(self._manual_url)
-        candidates.extend(SIDECAR_URLS)
+        if self._discovered_url and self._discovered_url not in candidates:
+            candidates.append(self._discovered_url)
+        candidates.extend(ANALYZER_URLS)
 
         for url in candidates:
             if await self._async_health(url):
                 self._resolved_url = url
-                _LOGGER.info("AX BPM: sidecar analyzer detected at %s", url)
+                _LOGGER.info("AX BPM: analyzer detected at %s", url)
                 return url
         self._resolved_url = None
         if self._manual_url:
             _LOGGER.info(
-                "AX BPM: sidecar analyzer not reachable at %s — mood "
-                "attributes disabled and local tempo degrades to the "
-                "NumPy floor",
+                "AX BPM: analyzer not reachable at %s — mood attributes "
+                "disabled and local tempo degrades to the NumPy floor",
                 self._manual_url,
             )
         else:
             _LOGGER.info(
-                "AX BPM: sidecar analyzer not detected — mood attributes "
-                "disabled and local tempo degrades to the NumPy floor"
+                "AX BPM: analyzer not detected — mood attributes disabled "
+                "and local tempo degrades to the NumPy floor"
             )
         return None
 
@@ -108,7 +111,7 @@ class SidecarClient:
         """GET /health. Returns the JSON body or None on any failure."""
         try:
             async with self._session.get(
-                f"{base_url}{SIDECAR_HEALTH_PATH}",
+                f"{base_url}{HEALTH_PATH}",
                 timeout=aiohttp.ClientTimeout(total=HEALTH_TIMEOUT),
             ) as resp:
                 if resp.status != 200:
@@ -119,7 +122,7 @@ class SidecarClient:
 
     async def async_health(self) -> dict[str, Any] | None:
         """Public health probe against the resolved (or manual) URL."""
-        base = self._resolved_url or self._manual_url
+        base = self._resolved_url or self._manual_url or self._discovered_url
         if not base:
             return None
         return await self._async_health(base)
@@ -130,7 +133,7 @@ class SidecarClient:
         try:
             preview = await loop.run_in_executor(None, _read_file, path)
         except OSError as err:
-            _LOGGER.debug("AX BPM sidecar preview read failed: %s", err)
+            _LOGGER.debug("AX BPM analyzer preview read failed: %s", err)
             return None
         if not preview:
             return None
@@ -143,7 +146,7 @@ class SidecarClient:
         tags) on success, None on any failure (timeout, HTTP error, 5xx,
         unreachable). Single attempt, no retry.
         """
-        base = self._resolved_url or self._manual_url
+        base = self._resolved_url or self._manual_url or self._discovered_url
         if not base:
             return None
         form = aiohttp.FormData()
@@ -159,27 +162,27 @@ class SidecarClient:
 
         async def _post() -> dict[str, Any] | None:
             async with self._session.post(
-                f"{base}{SIDECAR_ANALYZE_PATH}",
+                f"{base}{ANALYZE_PATH}",
                 data=form,
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=MOOD_TIMEOUT),
+                timeout=aiohttp.ClientTimeout(total=ANALYZER_TIMEOUT),
             ) as resp:
                 if resp.status != 200:
                     _LOGGER.debug(
-                        "AX BPM sidecar /analyze returned HTTP %s", resp.status
+                        "AX BPM analyzer /analyze returned HTTP %s", resp.status
                     )
                     return None
                 return await resp.json(content_type=None)
 
         try:
             # Hard outer timeout: guarantees the single attempt can never
-            # hang past MOOD_TIMEOUT regardless of transport behavior.
-            return await asyncio.wait_for(_post(), timeout=MOOD_TIMEOUT)
+            # hang past ANALYZER_TIMEOUT regardless of transport behavior.
+            return await asyncio.wait_for(_post(), timeout=ANALYZER_TIMEOUT)
         except (
             aiohttp.ClientError,
             asyncio.TimeoutError,
             OSError,
             ValueError,
         ) as err:
-            _LOGGER.debug("AX BPM sidecar /analyze failed: %s", err)
+            _LOGGER.debug("AX BPM analyzer /analyze failed: %s", err)
             return None

@@ -183,7 +183,7 @@ class DeezerClient:
         """Resolve a track and download its preview as raw bytes.
 
         Used by the post-publish mood enrichment path (Deezer-metadata
-        BPM already published; the sidecar needs the audio). Returns None
+        BPM already published; the analyzer needs the audio). Returns None
         on any failure. The URL is never cached.
         """
         match = await self.find_match(artist, title, duration)

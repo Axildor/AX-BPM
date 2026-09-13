@@ -14,7 +14,7 @@ Pinned constant set (all confirmed from Essentia source, master branch):
     Windowing type hann (default), normalized=false, zeroPhase=true,
     log10(10000 * mel + 1)   [UnaryOperator shift=1 scale=10000, then log10]
 
-This script becomes the CI comparison harness for the sidecar front end.
+This script becomes the CI comparison harness for the analyzer front end.
 
 Exit code 0 = PASS, 1 = FAIL.
 """

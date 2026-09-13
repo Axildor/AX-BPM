@@ -1,4 +1,4 @@
-name: Phase 0 — Golden Validation (AX-BPM sidecar gate)
+name: Phase 0 — Golden Validation (AX BPM Analyzer gate)
 
 # One-shot glibc job: the devcontainer is Alpine/musl and cannot run
 # TensorFlow. This workflow_dispatch job runs the TF reference path on
@@ -68,28 +68,28 @@ jobs:
           EOF
 
       - name: Generate deterministic clips
-        run: python sidecar/tests/goldens/generate_clips.py /tmp/clips
+        run: python analyzer/tests/goldens/generate_clips.py /tmp/clips
 
       - name: Freeze goldens (TF reference path)
         run: >
-          python sidecar/tests/goldens/freeze_goldens.py
+          python analyzer/tests/goldens/freeze_goldens.py
           --clips /tmp/clips
-          --out sidecar/tests/goldens
+          --out analyzer/tests/goldens
           --models /tmp/models
 
       - name: GATE — ONNX bsdynamic vs bs64 TF equivalence
         run: >
-          python sidecar/tests/goldens/check_onnx_equivalence.py
+          python analyzer/tests/goldens/check_onnx_equivalence.py
           --clips /tmp/clips
-          --goldens sidecar/tests/goldens
+          --goldens analyzer/tests/goldens
           --models /tmp/models
           --heads
 
       - name: Front-end composition test (no TensorflowInput*)
         run: >
-          python sidecar/tests/goldens/composed_frontend.py
+          python analyzer/tests/goldens/composed_frontend.py
           --clips /tmp/clips
-          --goldens sidecar/tests/goldens
+          --goldens analyzer/tests/goldens
 
       - name: Upload goldens artifact (always)
         if: always()
@@ -97,10 +97,10 @@ jobs:
         with:
           name: phase0-goldens${{ inputs.debug && '-debug' || '' }}
           path: |
-            sidecar/tests/goldens/goldens.npz
-            sidecar/tests/goldens/goldens_meta.json
-            sidecar/tests/goldens/onnx_equivalence_results.json
-            sidecar/tests/goldens/frontend_composition_results.json
+            analyzer/tests/goldens/goldens.npz
+            analyzer/tests/goldens/goldens_meta.json
+            analyzer/tests/goldens/onnx_equivalence_results.json
+            analyzer/tests/goldens/frontend_composition_results.json
 
       - name: Upload debug logs (debug mode only)
         if: ${{ inputs.debug }}
@@ -109,7 +109,7 @@ jobs:
           name: phase0-debug-logs
           path: |
             /tmp/models/*.sha256
-            sidecar/tests/goldens/*.json
+            analyzer/tests/goldens/*.json
 
       # Goldens are committed ONLY when the full gate passed
       # (all previous steps succeeded) and debug mode is off.
@@ -118,10 +118,10 @@ jobs:
         run: |
           git config user.name "phase0-golden-bot"
           git config user.email "phase0-golden-bot@users.noreply.github.com"
-          git add sidecar/tests/goldens/
+          git add analyzer/tests/goldens/
           if git diff --cached --quiet; then
             echo "No golden changes to commit"
           else
-            git commit -m "phase0: refresh goldens (gate $(cat sidecar/tests/goldens/onnx_equivalence_results.json | python -c 'import json,sys; print(json.load(sys.stdin)["verdict"])'))"
+            git commit -m "phase0: refresh goldens (gate $(cat analyzer/tests/goldens/onnx_equivalence_results.json | python -c 'import json,sys; print(json.load(sys.stdin)["verdict"])'))"
             git push
           fi

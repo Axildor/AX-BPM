@@ -1,10 +1,11 @@
 """Local tempo analysis — the NumPy floor.
 
-Since the aubio tempo tier moved into the sidecar add-on (tempo.py,
-served in the /analyze payload as `bpm`), the integration ships ONLY
-the pure-NumPy estimator as its local analyzer. It works out-of-the-box
-on installs where compiled wheels are unavailable (HA OS / HA Container,
-musl, no compiler) — the sidecar is the accuracy upgrade when installed.
+Since the aubio tempo tier moved into the AX BPM Analyzer add-on
+(tempo.py, served in the /analyze payload as `bpm`), the integration
+ships ONLY the pure-NumPy estimator as its local analyzer. It works
+out-of-the-box on installs where compiled wheels are unavailable
+(HA OS / HA Container, musl, no compiler) — the analyzer add-on is the
+accuracy upgrade when installed.
 
 Decoding to PCM is handled by decode.py (miniaudio → soundfile → ffmpeg).
 
@@ -28,7 +29,8 @@ def analyzer_available() -> bool:
     """True when local tempo analysis can run at all.
 
     With the NumPy floor, analysis is available whenever any decoder is
-    available; the sidecar (when installed) is the accuracy upgrade.
+    available; the analyzer add-on (when installed) is the accuracy
+    upgrade.
     """
     return decode_available()
 
@@ -64,7 +66,7 @@ class NumpyAnalyzer:
         if decode_available():
             _LOGGER.info(
                 "AX BPM: using built-in NumPy tempo estimator (install the "
-                "AX-BPM sidecar add-on for aubio-grade accuracy + mood)"
+                "AX BPM Analyzer add-on for aubio-grade accuracy + mood)"
             )
         else:
             _LOGGER.warning(

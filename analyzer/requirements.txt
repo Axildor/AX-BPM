@@ -1,4 +1,4 @@
-# AX-BPM sidecar runtime dependencies — EXACT pins.
+# AX BPM Analyzer runtime dependencies — EXACT pins.
 # Pinned to the versions validated by the green golden CI run; addon-builder
 # rebuilds must be reproducible. NO floating deps.
 # NO essentia, NO TensorFlow — pure NumPy front end + ONNX Runtime.

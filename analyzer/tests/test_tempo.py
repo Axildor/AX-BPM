@@ -1,4 +1,4 @@
-"""Sidecar tempo tier tests: aubio on in-memory samples.
+"""Analyzer tempo tier tests: aubio on in-memory samples.
 
 Tier 1 (musl devcontainer): aubio unavailable → skip-guarded (same
 pattern as require_onnx). Tier 3 CI: aubio is in requirements.txt →
@@ -19,7 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ax_bpm_sidecar import tempo
+from ax_bpm_analyzer import tempo
 
 
 def require_aubio() -> None:
@@ -85,7 +85,7 @@ class TestTempo:
 
     def test_unavailable_returns_none(self, monkeypatch):
         """estimate_bpm degrades to None when aubio is missing."""
-        import ax_bpm_sidecar.tempo as t
+        import ax_bpm_analyzer.tempo as t
 
         monkeypatch.setattr(t, "aubio_available", lambda: False)
         assert t.estimate_bpm(_click_track(120.0)) is None

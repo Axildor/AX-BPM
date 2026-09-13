@@ -1,4 +1,4 @@
-"""AX-BPM sidecar mood analyzer service (Phase 2).
+"""AX BPM Analyzer mood analyzer service (Phase 2).
 
 FastAPI service exposing POST /analyze and GET /health for the AX-BPM
 Home Assistant integration. Pure NumPy front end + ONNX Runtime inference;

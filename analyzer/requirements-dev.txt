@@ -1,4 +1,4 @@
-# AX-BPM sidecar dev/test dependencies (NOT installed in the runtime image).
+# AX BPM Analyzer dev/test dependencies (NOT installed in the runtime image).
 -r requirements.txt
 pytest==9.1.1
 pytest-asyncio==1.4.0

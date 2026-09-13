@@ -21,15 +21,19 @@ OCTAVE_GENRE_ONLY = "genre_only"
 OCTAVE_GENRE_MOOD = "genre_mood"
 OCTAVE_MODES = [OCTAVE_OFF, OCTAVE_GENRE_ONLY, OCTAVE_GENRE_MOOD]
 
-# Manual sidecar URL override (empty = auto-detect only).
-CONF_MOOD_ANALYZER_URL = "mood_analyzer_url"
+# Manual analyzer URL override (empty = auto-detect only).
+CONF_ANALYZER_URL = "analyzer_url"
+
+# URL learned from HA-native add-on discovery (Supervisor). Internal —
+# not a user-facing field; written into the entry at discovery time.
+CONF_DISCOVERED_ANALYZER_URL = "discovered_analyzer_url"
 
 # ---------------------------------------------------------------------------
 # Octave disambiguation — core tunables (see math.py for the decision order)
 # ---------------------------------------------------------------------------
 
 # Raw local-analyzer readings in [65, 110) where the real tempo might be
-# 2x raw (NumPy floor or sidecar aubio — both feed the same gate).
+# 2x raw (NumPy floor or analyzer aubio — both feed the same gate).
 LOW_WINDOW = (65.0, 110.0)
 # Raw local-analyzer readings in (150, 200] where the real tempo might be
 # raw / 2.
@@ -57,10 +61,10 @@ SLOW_GENRES = frozenset({
 # ---------------------------------------------------------------------------
 NETWORK_TIMEOUT = 10.0        # per Deezer HTTP request
 ANALYSIS_TIMEOUT = 15.0       # per local analyzer (NumPy floor)
-# Per sidecar mood request (hard, single attempt). 25 s: aarch64 inference
+# Per analyzer request (hard, single attempt). 25 s: aarch64 inference
 # can exceed 8 s; mood is fully async post-publish on the Deezer path, and
 # the local path stays bounded by OVERALL_BUDGET.
-MOOD_TIMEOUT = 25.0
+ANALYZER_TIMEOUT = 25.0
 OVERALL_BUDGET = 25.0         # whole per-track resolution budget
 
 # Track-change debounce: wait this long after playback starts / track changes
@@ -83,27 +87,27 @@ DECODE_SAMPLE_RATE = 22050
 PLATFORMS = ["sensor"]
 UNIT_BPM = "BPM"
 SOURCE_DEEZER = "deezer_metadata"
-SOURCE_SIDECAR = "sidecar"
+SOURCE_ANALYZER = "analyzer"
 SOURCE_NUMPY = "numpy"
 SOURCE_CACHE = "cache"
 
-# Sidecar mood analyzer (Phase 2 add-on) endpoints.
-# Auto-detect order: add-on internal hostname → homeassistant.local →
-# manual mood_analyzer_url override. Empty manual URL = feature off.
-SIDECAR_PORT = 8099
-SIDECAR_URLS = (
-    f"http://ax-bpm-sidecar:{SIDECAR_PORT}",   # add-on internal hostname
-    f"http://homeassistant.local:{SIDECAR_PORT}",  # external sidecar mode
+# AX BPM Analyzer add-on endpoints.
+# Auto-detect order: manual analyzer_url override → discovered URL
+# (Supervisor discovery) → homeassistant.local fallback. Empty manual URL
+# = auto-detect only.
+ANALYZER_PORT = 8099
+ANALYZER_URLS = (
+    f"http://homeassistant.local:{ANALYZER_PORT}",  # external analyzer mode
 )
-SIDECAR_ANALYZE_PATH = "/analyze"
-SIDECAR_HEALTH_PATH = "/health"
+ANALYZE_PATH = "/analyze"
+HEALTH_PATH = "/health"
 
-# Shared-secret auth for the sidecar /analyze endpoint (Bearer token).
+# Shared-secret auth for the analyzer /analyze endpoint (Bearer token).
 # Set the same token in the add-on config and here; empty = no token sent
-# (the sidecar answers 401 when its own token is set).
-CONF_MOOD_API_TOKEN = "mood_api_token"
+# (the analyzer answers 401 when its own token is set).
+CONF_ANALYZER_API_TOKEN = "analyzer_api_token"
 
-# The five gating signals. mood_scores from the sidecar is ATOMIC over
+# The five gating signals. mood_scores from the analyzer is ATOMIC over
 # exactly this set: consumed only when present AND complete — a missing
 # key read as 0.0 would mean "maximally non-X" and bias octave gating
 # toward intensity during partial failure. Incomplete → genre-only.

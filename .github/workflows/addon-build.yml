@@ -7,7 +7,7 @@ on:
     branches: [main]
     paths:
       - "addon/**"
-      - "sidecar/**"
+      - "analyzer/**"
       - "repository.json"
       - ".github/workflows/addon-build.yml"
 
@@ -22,7 +22,7 @@ jobs:
 
       # The hassio builder uses the --target dir as the docker build
       # context, but addon/Dockerfile COPYs repo-root-relative paths
-      # (sidecar/, addon/run.sh, pytest.ini). Assemble a self-contained
+      # (analyzer/, addon/run.sh, pytest.ini). Assemble a self-contained
       # staging dir replicating that layout.
       - name: Assemble self-contained build context
         run: |
@@ -30,7 +30,7 @@ jobs:
           cp addon/Dockerfile addon-build-context/
           cp addon/config.yaml addon-build-context/
           cp addon/run.sh addon-build-context/addon/
-          cp -r sidecar addon-build-context/sidecar
+          cp -r analyzer addon-build-context/analyzer
           cp pytest.ini addon-build-context/
 
       - name: Build ${{ matrix.arch }}

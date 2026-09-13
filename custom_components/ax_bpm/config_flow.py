@@ -1,9 +1,17 @@
 """Config flow for AX BPM (UI only, no YAML).
 
-Phase 1: the legacy genre_correction / mood_correction toggle pair is
-replaced by ONE `octave_disambiguation` dropdown (Off / Genre only /
-Genre + mood) plus an optional manual `mood_analyzer_url` override.
-Legacy entries are migrated on the next options save (or entry reload).
+The legacy genre_correction / mood_correction toggle pair is replaced by
+ONE `octave_disambiguation` dropdown (Off / Genre only / Genre + mood)
+plus an optional manual `analyzer_url` override.
+
+HA-native discovery: the AX BPM Analyzer add-on announces itself to the
+Supervisor, which routes the flow to `async_step_hassio` — the discovered
+host/port is stored as `discovered_analyzer_url` so the client can reach
+the add-on without guessing its hostname. That key is INTERNAL: it is
+never rendered as a form field.
+
+Legacy entries are migrated on the next options save (or entry reload);
+v1 → v2 key renames are handled by `async_migrate_entry` in __init__.py.
 """
 
 from __future__ import annotations
@@ -15,10 +23,12 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import aiohttp_client, selector
 
+from .analyzer_client import AnalyzerClient
 from .const import (
+    CONF_ANALYZER_API_TOKEN,
+    CONF_ANALYZER_URL,
+    CONF_DISCOVERED_ANALYZER_URL,
     CONF_MEDIA_PLAYER,
-    CONF_MOOD_ANALYZER_URL,
-    CONF_MOOD_API_TOKEN,
     CONF_OCTAVE_DISAMBIGUATION,
     DOMAIN,
     NAME,
@@ -27,7 +37,6 @@ from .const import (
     OCTAVE_MODES,
     OCTAVE_OFF,
 )
-from .sidecar_client import SidecarClient
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,12 +59,15 @@ def _migrate_legacy_toggles(merged: dict) -> str:
     return OCTAVE_OFF
 
 
-def _build_schema(defaults: dict, sidecar_detected: bool) -> vol.Schema:
+def _build_schema(defaults: dict, analyzer_detected: bool) -> vol.Schema:
     """Build the shared config/options schema.
 
-    "Genre + mood" is disabled with helper text when no sidecar was
+    "Genre + mood" is disabled with helper text when no analyzer was
     detected; the user can still select it (the pipeline degrades to
     genre-only at runtime), but the UI makes the state visible.
+
+    `discovered_analyzer_url` is deliberately NOT part of the schema —
+    it is internal plumbing written by the discovery flow.
     """
     octave_default = defaults.get(
         CONF_OCTAVE_DISAMBIGUATION, OCTAVE_GENRE_ONLY
@@ -76,15 +88,30 @@ def _build_schema(defaults: dict, sidecar_detected: bool) -> vol.Schema:
             )
         ),
         vol.Optional(
-            CONF_MOOD_ANALYZER_URL,
-            default=defaults.get(CONF_MOOD_ANALYZER_URL, ""),
+            CONF_ANALYZER_URL,
+            default=defaults.get(CONF_ANALYZER_URL, ""),
         ): str,
         vol.Optional(
-            CONF_MOOD_API_TOKEN,
-            default=defaults.get(CONF_MOOD_API_TOKEN, ""),
+            CONF_ANALYZER_API_TOKEN,
+            default=defaults.get(CONF_ANALYZER_API_TOKEN, ""),
         ): str,
     }
     return vol.Schema(schema)
+
+
+def _status_line(analyzer_detected: bool) -> str:
+    """Connection status line shown on the config/options form."""
+    if analyzer_detected:
+        return "AX BPM Analyzer add-on detected."
+    return (
+        "AX BPM Analyzer add-on not detected — 'Genre + mood' will "
+        "degrade to genre-only until it is reachable."
+    )
+
+
+def _clean(user_input: dict) -> dict:
+    """Drop empty optional strings so they are not persisted."""
+    return {k: v for k, v in user_input.items() if v not in ("", None)}
 
 
 class AxBpmOptionsHandler(config_entries.OptionsFlow):
@@ -92,31 +119,23 @@ class AxBpmOptionsHandler(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
-            # Empty optional strings → drop them.
-            user_input = {
-                k: v for k, v in user_input.items() if v not in ("", None)
-            }
-            return self.async_create_entry(title="", data=user_input)
+            return self.async_create_entry(title="", data=_clean(user_input))
         current = {**self.config_entry.data, **self.config_entry.options}
-        sidecar = await self._probe_sidecar(current)
+        analyzer = await self._probe_analyzer(current)
         return self.async_show_form(
             step_id="init",
-            data_schema=_build_schema(current, sidecar),
+            data_schema=_build_schema(current, analyzer),
             description_placeholders={
-                "sidecar_status": (
-                    "Sidecar mood analyzer detected."
-                    if sidecar
-                    else "Sidecar mood analyzer not detected — 'Genre + mood' "
-                    "will degrade to genre-only until it is reachable."
-                ),
+                "analyzer_status": _status_line(analyzer),
             },
         )
 
-    async def _probe_sidecar(self, current: dict) -> bool:
+    async def _probe_analyzer(self, current: dict) -> bool:
         """One-shot health probe for the connection status line."""
-        client = SidecarClient(
+        client = AnalyzerClient(
             aiohttp_client.async_get_clientsession(self.hass),
-            current.get(CONF_MOOD_ANALYZER_URL),
+            current.get(CONF_ANALYZER_URL),
+            discovered_url=current.get(CONF_DISCOVERED_ANALYZER_URL),
         )
         return await client.async_detect() is not None
 
@@ -124,37 +143,68 @@ class AxBpmOptionsHandler(config_entries.OptionsFlow):
 class AxBpmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for AX BPM."""
 
-    VERSION = 1
+    VERSION = 2
+
+    def __init__(self) -> None:
+        self._discovered_url: str | None = None
 
     async def async_step_user(self, user_input=None):
-        errors = {}
         if user_input is not None:
-            # Empty optional strings → drop them.
-            user_input = {
-                k: v for k, v in user_input.items() if v not in ("", None)
-            }
-            return self.async_create_entry(title=NAME, data=user_input)
+            data = _clean(user_input)
+            if self._discovered_url:
+                data[CONF_DISCOVERED_ANALYZER_URL] = self._discovered_url
+            return self.async_create_entry(title=NAME, data=data)
 
-        sidecar = await self._probe_sidecar({})
+        analyzer = await self._probe_analyzer({})
         return self.async_show_form(
             step_id="user",
-            data_schema=_build_schema({}, sidecar),
-            errors=errors,
+            data_schema=_build_schema({}, analyzer),
             description_placeholders={
-                "sidecar_status": (
-                    "Sidecar mood analyzer detected."
-                    if sidecar
-                    else "Sidecar mood analyzer not detected — 'Genre + mood' "
-                    "will degrade to genre-only until it is reachable."
-                ),
+                "analyzer_status": _status_line(analyzer),
             },
         )
 
-    async def _probe_sidecar(self, current: dict) -> bool:
+    async def async_step_hassio(self, discovery_info=None):
+        """Handle HA-native discovery from the AX BPM Analyzer add-on.
+
+        The Supervisor routes the add-on's discovery announcement here
+        (service "ax_bpm"). `discovery_info` is a HassioServiceInfo whose
+        `.config` carries the add-on's real hostname + port.
+
+        We record the discovered URL and show the normal setup form with
+        `step_id="user"` — HA routes the user's submission to
+        `async_step_user`, which injects the recorded URL into the entry.
+        """
+        config = getattr(discovery_info, "config", None) or {}
+        host = config.get("host")
+        port = config.get("port")
+        if not host or not port:
+            _LOGGER.warning(
+                "AX BPM: discovery announcement carried no host/port — "
+                "falling back to the manual setup form"
+            )
+            return await self.async_step_user()
+
+        self._discovered_url = f"http://{host}:{port}"
+        _LOGGER.info("AX BPM: analyzer discovered at %s", self._discovered_url)
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=_build_schema({}, True),
+            description_placeholders={
+                "analyzer_status": _status_line(True),
+            },
+        )
+
+    async def _probe_analyzer(self, current: dict) -> bool:
         """One-shot health probe for the connection status line."""
-        client = SidecarClient(
+        client = AnalyzerClient(
             aiohttp_client.async_get_clientsession(self.hass),
-            current.get(CONF_MOOD_ANALYZER_URL),
+            current.get(CONF_ANALYZER_URL),
+            discovered_url=(
+                current.get(CONF_DISCOVERED_ANALYZER_URL)
+                or self._discovered_url
+            ),
         )
         return await client.async_detect() is not None
 

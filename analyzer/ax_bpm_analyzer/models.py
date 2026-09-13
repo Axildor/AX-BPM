@@ -84,7 +84,7 @@ class ModelManager:
             else:
                 self._states[name] = "error"
                 _LOGGER.error(
-                    "AX-BPM sidecar: model %s failed to download after %d "
+                    "AX BPM Analyzer: model %s failed to download after %d "
                     "attempts — degraded health (mood features using this "
                     "model are disabled)",
                     name,
@@ -95,23 +95,23 @@ class ModelManager:
         for attempt in range(1, cfg.DOWNLOAD_RETRIES + 1):
             try:
                 _LOGGER.info(
-                    "AX-BPM sidecar: downloading model %s (%d bytes) from %s",
+                    "AX BPM Analyzer: downloading model %s (%d bytes) from %s",
                     name, pin["size"], pin["url"],
                 )
                 tmp = path.with_suffix(path.suffix + ".tmp")
                 urllib.request.urlretrieve(pin["url"], tmp)
                 if self._verify_file(tmp, pin):
                     tmp.replace(path)
-                    _LOGGER.info("AX-BPM sidecar: model %s verified (sha256 ok)", name)
+                    _LOGGER.info("AX BPM Analyzer: model %s verified (sha256 ok)", name)
                     return True
                 _LOGGER.warning(
-                    "AX-BPM sidecar: model %s sha256/size mismatch after "
+                    "AX BPM Analyzer: model %s sha256/size mismatch after "
                     "download — retrying", name,
                 )
                 tmp.unlink(missing_ok=True)
             except Exception as err:  # noqa: BLE001 — download failures retry
                 _LOGGER.warning(
-                    "AX-BPM sidecar: model %s download attempt %d failed: %s",
+                    "AX BPM Analyzer: model %s download attempt %d failed: %s",
                     name, attempt, err,
                 )
             if attempt < cfg.DOWNLOAD_RETRIES:

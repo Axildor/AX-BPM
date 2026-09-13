@@ -15,10 +15,10 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ax_bpm_sidecar import config as cfg
-from ax_bpm_sidecar.api import app, state
-from ax_bpm_sidecar.inference import InferenceEngine
-from ax_bpm_sidecar.models import ModelManager
+from ax_bpm_analyzer import config as cfg
+from ax_bpm_analyzer.api import app, state
+from ax_bpm_analyzer.inference import InferenceEngine
+from ax_bpm_analyzer.models import ModelManager
 
 TOKEN = "test-token-1234"
 
@@ -66,7 +66,7 @@ def test_health_open_without_token(client):
 
 def test_analyze_happy_path(client, monkeypatch):
     monkeypatch.setattr(
-        "ax_bpm_sidecar.api._analyze_sync", lambda data: _stub_payload()
+        "ax_bpm_analyzer.api._analyze_sync", lambda data: _stub_payload()
     )
     resp = _post(client, b"fake-audio")
     assert resp.status_code == 200
@@ -112,7 +112,7 @@ def test_analyze_503_busy(client, monkeypatch):
         time.sleep(0.5)
         return _stub_payload()
 
-    monkeypatch.setattr("ax_bpm_sidecar.api._analyze_sync", slow_sync)
+    monkeypatch.setattr("ax_bpm_analyzer.api._analyze_sync", slow_sync)
     results = {}
 
     def first():
@@ -139,7 +139,7 @@ def test_analyze_503_models_error(client):
 def test_analyze_503_effnet_missing(client, monkeypatch):
     """effnet session missing → 503 (nothing can be computed)."""
     monkeypatch.setattr(
-        "ax_bpm_sidecar.api._analyze_sync", lambda data: None
+        "ax_bpm_analyzer.api._analyze_sync", lambda data: None
     )
     resp = _post(client, b"fake-audio")
     assert resp.status_code == 503
@@ -153,14 +153,14 @@ def test_truncation_to_max_seconds(client, monkeypatch):
         captured["called"] = True
         return _stub_payload()
 
-    monkeypatch.setattr("ax_bpm_sidecar.api._analyze_sync", fake_sync)
+    monkeypatch.setattr("ax_bpm_analyzer.api._analyze_sync", fake_sync)
     monkeypatch.setattr(cfg, "MAX_ANALYZE_SECONDS", 5.0)
     # decode is stubbed to return 10 s of audio; truncation happens in
     # _analyze_sync — test it directly.
-    from ax_bpm_sidecar.api import _analyze_sync
+    from ax_bpm_analyzer.api import _analyze_sync
 
     monkeypatch.setattr(
-        "ax_bpm_sidecar.decode.decode",
+        "ax_bpm_analyzer.decode.decode",
         lambda data: (np.zeros(int(10 * cfg.SAMPLE_RATE), dtype=np.float32), cfg.SAMPLE_RATE),
     )
     payload = _analyze_sync(b"whatever")

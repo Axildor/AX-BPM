@@ -11,6 +11,7 @@ from homeassistant.helpers import issue_registry as ir
 
 from .analyzer import analyzer_available
 from .const import CONF_MEDIA_PLAYER, DOMAIN, PLATFORMS
+from .migration import async_migrate_entry  # noqa: F401 — HA entry point
 from .pipeline import BpmPipeline
 from .store import BpmCache
 
@@ -75,7 +76,7 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         ir.async_delete_issue(hass, DOMAIN, ISSUE_NO_ANALYZER)
         data = hass.data[DOMAIN].pop(entry.entry_id, {})

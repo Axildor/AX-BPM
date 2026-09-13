@@ -5,12 +5,12 @@ Push-only (should_poll=False): reacts to media_player state changes.
 - pause: retain last value; stop/off/unavailable: unknown
 - failure: unknown — NEVER publish 0
 
-Phase 1: BPM publishes first (unchanged path). On the Deezer-metadata
-path the sensor then triggers the pipeline's post-publish mood
-enrichment; when the sidecar responds, mood attributes arrive as a
-second `async_write_ha_state`. The local-analysis path already carries
-mood attributes in the first publish (sidecar tempo+mood in one call,
-or NumPy floor with a concurrent mood call).
+BPM publishes first (unchanged path). On the Deezer-metadata path the
+sensor then triggers the pipeline's post-publish mood enrichment; when
+the analyzer responds, mood attributes arrive as a second
+`async_write_ha_state`. The local-analysis path already carries mood
+attributes in the first publish (analyzer tempo+mood in one call, or
+NumPy floor with a concurrent mood call).
 """
 
 from __future__ import annotations
@@ -184,7 +184,7 @@ class AxBpmSensor(SensorEntity):
 
         # Post-publish mood enrichment (Deezer-metadata path only; the
         # local path already carries mood attrs). A second state write
-        # adds the mood attributes when the sidecar responds. Never
+        # adds the mood attributes when the analyzer responds. Never
         # delays or blocks the BPM publish above.
         try:
             mood_attrs = await self._pipeline.async_enrich(

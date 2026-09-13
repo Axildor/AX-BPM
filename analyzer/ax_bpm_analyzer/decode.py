@@ -1,7 +1,7 @@
 """Audio decode chain: miniaudio → soundfile → ffmpeg binary.
 
 Mirrors the integration's decode.py chain, targeting 16 kHz mono float32
-(the sidecar front end's input spec). Each decoder is probed lazily and
+(the analyzer front end's input spec). Each decoder is probed lazily and
 cached; a decoder that fails to import or errors falls through to the
 next. The ffmpeg path uses the binary present in most container images.
 

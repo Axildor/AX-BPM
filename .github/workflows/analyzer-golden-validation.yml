@@ -1,4 +1,4 @@
-# Tier 3 — AUTHORITATIVE sidecar golden validation (glibc).
+# Tier 3 — AUTHORITATIVE analyzer golden validation (glibc).
 # Mirrors the phase0 job: ubuntu-latest, Python 3.12, pinned requirements.
 # HARD asserts: onnxruntime importable, AXBPM_REQUIRE_ONNX=1, ZERO skips
 # in the golden test files (any skip = job failure).
@@ -7,15 +7,15 @@
 # System deps: the golden-test conftest resamples via ctypes on the system
 # libsamplerate (essentia MonoLoader replication) — ubuntu-latest does not
 # ship it, so it is installed explicitly below.
-name: sidecar-golden-validation
+name: analyzer-golden-validation
 
 on:
   push:
     branches: [main]
     paths:
-      - "sidecar/**"
+      - "analyzer/**"
       - "tests/**"
-      - ".github/workflows/sidecar-golden-validation.yml"
+      - ".github/workflows/analyzer-golden-validation.yml"
   workflow_dispatch:
     inputs:
       debug:
@@ -47,7 +47,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .axbpm-models
-          key: axbpm-models-${{ hashFiles('sidecar/ax_bpm_sidecar/config.py') }}
+          key: axbpm-models-${{ hashFiles('analyzer/ax_bpm_analyzer/config.py') }}
 
       - name: Install system deps (libsamplerate + ffmpeg)
         # libsamplerate0: the golden-test conftest resamples via ctypes on
@@ -69,7 +69,7 @@ jobs:
           # WITHOUT isolation before requirements-dev pulls the pin.
           pip install numpy==2.5.3 setuptools wheel
           pip install --no-cache-dir --no-build-isolation aubio==0.4.9
-          pip install -r sidecar/requirements-dev.txt
+          pip install -r analyzer/requirements-dev.txt
           # Integration suite: the conftest stubs homeassistant but not the
           # other third-party modules the integration imports at module level.
           pip install aiohttp==3.14.3 voluptuous==0.16.0
@@ -83,14 +83,14 @@ jobs:
             echo "AXBPM_REQUIRE_ONNX must be 1"; exit 1
           fi
 
-      - name: Run sidecar test suite (zero skips in golden files)
+      - name: Run analyzer test suite (zero skips in golden files)
         run: |
           set -o pipefail
-          pytest sidecar/tests -ra -v 2>&1 | tee pytest-sidecar.log
+          pytest analyzer/tests -ra -v 2>&1 | tee pytest-analyzer.log
           # Zero-skip guard: golden + tempo files must have NO skipped
           # tests (AXBPM_REQUIRE_TEMPO=1 makes a missing aubio a failure,
           # never a skip).
-          if grep -E "test_frontend_goldens|test_inference_goldens|test_tempo" pytest-sidecar.log | grep -q "SKIPPED"; then
+          if grep -E "test_frontend_goldens|test_inference_goldens|test_tempo" pytest-analyzer.log | grep -q "SKIPPED"; then
             echo "FATAL: skipped tests in golden/tempo files — vacuous pass"; exit 1
           fi
 
@@ -99,4 +99,4 @@ jobs:
 
       - name: Summary
         if: always()
-        run: tail -20 pytest-sidecar.log || true
+        run: tail -20 pytest-analyzer.log || true

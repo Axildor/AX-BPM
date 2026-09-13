@@ -23,8 +23,7 @@ from typing import Any
 import numpy as np
 
 from . import config as cfg
-from . import frontend
-from . import tempo
+from . import frontend, tempo
 from .models import ModelManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,7 +44,7 @@ class InferenceEngine:
         """Create ONNX Runtime CPU sessions for every verified model.
 
         Thread-capped: intra_op default 2 (add-on option), inter_op 1 —
-        the sidecar shares host CPU with HA core; unbounded thread use can
+        the analyzer shares host CPU with HA core; unbounded thread use can
         stutter core.
         """
         import onnxruntime as ort
@@ -64,10 +63,10 @@ class InferenceEngine:
                     str(path), sess_options=opts,
                     providers=["CPUExecutionProvider"],
                 )
-                _LOGGER.info("AX-BPM sidecar: session loaded for %s", name)
+                _LOGGER.info("AX BPM Analyzer: session loaded for %s", name)
             except Exception as err:  # noqa: BLE001 — degrade, never crash
                 _LOGGER.error(
-                    "AX-BPM sidecar: session load failed for %s: %s", name, err
+                    "AX BPM Analyzer: session load failed for %s: %s", name, err
                 )
                 self._models.states[name] = "error"
 
@@ -119,7 +118,7 @@ class InferenceEngine:
             # Pinned output must be probabilities in [0,1] — logits fail.
             if out.min() < 0.0 or out.max() > 1.0 + 1e-6:
                 _LOGGER.error(
-                    "AX-BPM sidecar: pinned moodtheme output index %d is "
+                    "AX BPM Analyzer: pinned moodtheme output index %d is "
                     "not in [0,1] (range [%s, %s]) — wrong pin?",
                     idx, out.min(), out.max(),
                 )

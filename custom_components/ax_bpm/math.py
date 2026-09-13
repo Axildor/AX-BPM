@@ -10,7 +10,7 @@ Signals:
 - intensity  I = (S_aggressive + S_party + S_electronic + genre_fast) / 4
 - calmness   C = (S_relaxed + S_acoustic + genre_slow) / 3
 
-Mood scores S_x are continuous values in [0, 1] from the sidecar mood
+Mood scores S_x are continuous values in [0, 1] from the analyzer mood
 analyzer's tag scores (Phase 1: previously Essentia SVM classifiers).
 
 Graceful degradation: when mood scores are unavailable (None), the mood

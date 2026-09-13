@@ -21,10 +21,11 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from . import config as cfg
+from . import tempo
 from .decode import decode, downsample
+from .discovery import async_announce
 from .inference import InferenceEngine
 from .models import ModelManager
-from . import tempo
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,11 +62,14 @@ async def lifespan(app: FastAPI):
             state.models.ensure_all()
             state.engine.load_sessions()
         except Exception as err:  # noqa: BLE001 — degraded, never crash
-            _LOGGER.error("AX-BPM sidecar: startup degraded: %s", err)
+            _LOGGER.error("AX BPM Analyzer: startup degraded: %s", err)
+        # Announce to the Supervisor so the integration learns our real
+        # hostname + port (HA-native discovery). Best-effort, never raises.
+        await async_announce()
     yield
 
 
-app = FastAPI(title="AX-BPM sidecar", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="AX BPM Analyzer", version="1.0.0", lifespan=lifespan)
 
 
 def _check_token(request: Request) -> None:
@@ -75,7 +79,7 @@ def _check_token(request: Request) -> None:
     if not expected:
         if not _TOKEN_HINT_LOGGED:
             _LOGGER.warning(
-                "AX-BPM sidecar: no api_token configured — /analyze returns "
+                "AX BPM Analyzer: no api_token configured — /analyze returns "
                 "401 until a token is set in the add-on configuration"
             )
             _TOKEN_HINT_LOGGED = True

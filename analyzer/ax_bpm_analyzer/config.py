@@ -1,4 +1,4 @@
-"""Sidecar configuration: model pins, front-end constants, class-order map.
+"""Analyzer configuration: model pins, front-end constants, class-order map.
 
 Every model is pinned by URL + size + sha256. Pins were captured with the
 hash-and-reconfirm methodology (download, hash, re-download from an
@@ -31,7 +31,7 @@ API_TOKEN = os.environ.get("AXBPM_API_TOKEN", "")
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB multipart cap → 413
 MAX_ANALYZE_SECONDS = float(os.environ.get("AXBPM_MAX_ANALYZE_SECONDS", "60"))
 
-# onnxruntime session options — the sidecar shares host CPU with HA core;
+# onnxruntime session options — the analyzer shares host CPU with HA core;
 # unbounded thread use can stutter core. These are the only lever.
 INTRA_OP_THREADS = int(os.environ.get("AXBPM_INTRA_OP_THREADS", "2"))
 INTER_OP_THREADS = 1
@@ -48,7 +48,7 @@ DATA_DIR = Path(os.environ.get("AXBPM_DATA_DIR", "/data"))
 
 # ---------------------------------------------------------------------------
 # Front-end constants (TensorflowInputMusiCNN, confirmed from Essentia
-# source; identical to sidecar/tests/goldens/goldens_meta.json)
+# source; identical to analyzer/tests/goldens/goldens_meta.json)
 # ---------------------------------------------------------------------------
 SAMPLE_RATE = 16000
 FRAME_SIZE = 512
@@ -75,7 +75,7 @@ LAST_PATCH_MODE = "repeat"
 # ---------------------------------------------------------------------------
 # Model pins (URL + size + sha256; release metadata from the model cards)
 # All classification heads: v2, release 2022-08-25, CC BY-NC-SA.
-# effnet bsdynamic sha256 matches sidecar/tests/goldens/goldens_meta.json.
+# effnet bsdynamic sha256 matches analyzer/tests/goldens/goldens_meta.json.
 # ---------------------------------------------------------------------------
 MODELS_BASE = "https://essentia.upf.edu/models"
 

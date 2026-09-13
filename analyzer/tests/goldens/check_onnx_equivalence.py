@@ -16,7 +16,7 @@ Gate criteria (from the plan):
   - head probability tolerance:          <= 1e-3 (heads run on ONNX pooled
     embeddings vs frozen TF-head probabilities)
 
-Exit code 0 = PASS, 1 = FAIL. A FAIL stops all sidecar work.
+Exit code 0 = PASS, 1 = FAIL. A FAIL stops all analyzer work.
 """
 
 from __future__ import annotations

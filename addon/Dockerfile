@@ -1,7 +1,7 @@
-# AX-BPM Sidecar — multi-stage build.
+# AX BPM Analyzer — multi-stage build.
 # Runtime stage: python:3.12-slim (Debian/glibc) + pinned requirements ONLY.
 # Dev stage: adds requirements-dev.txt (pytest/httpx/ruff) for Tier 2
-# iteration (docker compose exec <sidecar-svc> pytest sidecar/tests).
+# iteration (docker compose exec <analyzer-svc> pytest analyzer/tests).
 # NO essentia, NO TensorFlow — pure NumPy front end + ONNX Runtime.
 
 # Wheel-build stage: miniaudio ships no aarch64 wheels on PyPI, and aubio is
@@ -34,13 +34,13 @@ FROM python:3.12-slim AS runtime
 
 WORKDIR /usr/src/axbpm
 COPY --from=wheelbuild /wheels /wheels
-COPY sidecar/requirements.txt sidecar/requirements.txt
+COPY analyzer/requirements.txt analyzer/requirements.txt
 # --find-links makes pip prefer the prebuilt miniaudio wheel over the PyPI
 # source tarball (no aarch64 wheels exist upstream).
-RUN pip install --no-cache-dir --find-links=/wheels -r sidecar/requirements.txt \
+RUN pip install --no-cache-dir --find-links=/wheels -r analyzer/requirements.txt \
     && rm -rf /wheels
 
-COPY sidecar/ax_bpm_sidecar sidecar/ax_bpm_sidecar
+COPY analyzer/ax_bpm_analyzer analyzer/ax_bpm_analyzer
 COPY addon/run.sh addon/run.sh
 RUN chmod +x addon/run.sh
 
@@ -48,11 +48,11 @@ ENV AXBPM_DATA_DIR=/data
 VOLUME /data
 EXPOSE 8099
 
-CMD ["python", "-m", "ax_bpm_sidecar.api"]
+CMD ["python", "-m", "ax_bpm_analyzer.api"]
 
 # --- Dev target (Tier 2 iteration only — never published) -------------------
 FROM runtime AS dev
-COPY sidecar/requirements-dev.txt sidecar/requirements-dev.txt
-RUN pip install --no-cache-dir -r sidecar/requirements-dev.txt
-COPY sidecar/tests sidecar/tests
+COPY analyzer/requirements-dev.txt analyzer/requirements-dev.txt
+RUN pip install --no-cache-dir -r analyzer/requirements-dev.txt
+COPY analyzer/tests analyzer/tests
 COPY pytest.ini pytest.ini

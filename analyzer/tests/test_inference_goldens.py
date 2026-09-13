@@ -32,9 +32,9 @@ from conftest import (
 
 require_onnx()
 
-from ax_bpm_sidecar import config as cfg
-from ax_bpm_sidecar.inference import InferenceEngine
-from ax_bpm_sidecar.models import ModelManager
+from ax_bpm_analyzer import config as cfg
+from ax_bpm_analyzer.inference import InferenceEngine
+from ax_bpm_analyzer.models import ModelManager
 
 EMB_TOL = 1e-4   # elementwise, Phase 0 criterion
 PROB_TOL = 1e-3  # Phase 0 criterion
@@ -78,7 +78,7 @@ def test_pooled_embedding_golden(engine, clips_16k, name):
     """Pooled embedding vs golden: elementwise ≤1e-4 (cosine = diagnostic)."""
     goldens = np.load(GOLDENS_DIR / "goldens.npz")
     audio = clips_16k[name]
-    patches = __import__("ax_bpm_sidecar.frontend", fromlist=["front_end"]).front_end(audio)
+    patches = __import__("ax_bpm_analyzer.frontend", fromlist=["front_end"]).front_end(audio)
     pooled = engine._embeddings(patches)
 
     ref = goldens[f"{name}__pooled_emb"]
@@ -100,7 +100,7 @@ def test_head_probs_golden(engine, clips_16k, name):
     """Head probs vs golden: abs-diff ≤1e-3; pinned moodtheme output in [0,1]."""
     goldens = np.load(GOLDENS_DIR / "goldens.npz")
     audio = clips_16k[name]
-    patches = __import__("ax_bpm_sidecar.frontend", fromlist=["front_end"]).front_end(audio)
+    patches = __import__("ax_bpm_analyzer.frontend", fromlist=["front_end"]).front_end(audio)
     pooled = engine._embeddings(patches)
 
     theme = engine._head("moodtheme", pooled)

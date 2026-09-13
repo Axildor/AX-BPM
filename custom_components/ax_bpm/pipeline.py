@@ -1,7 +1,7 @@
 """Per-track BPM resolution pipeline.
 
 Order: cache lookup → anonymous Deezer match (metadata bpm) → local
-analysis (sidecar tempo+mood when healthy → NumPy floor) → octave
+analysis (analyzer tempo+mood when healthy → NumPy floor) → octave
 disambiguation → publish.
 
 Invariants:
@@ -10,16 +10,16 @@ Invariants:
   stage completed, else unknown.
 - Never publish 0: failure → None (sensor shows unknown).
 - Mood correction only ever fires on the locally analyzed estimate
-  (sidecar aubio or NumPy floor), never on Deezer metadata bpm.
-- Graceful degradation: sidecar(bpm+mood) → NumPy floor + genre-only → raw.
+  (analyzer aubio or NumPy floor), never on Deezer metadata bpm.
+- Graceful degradation: analyzer(bpm+mood) → NumPy floor + genre-only → raw.
 - Mood-enabled cache miss downloads the 30 s preview ONCE (regardless of
   Deezer bpm) and reuses the same buffer for the local BPM fallback AND
-  the sidecar call; discarded after.
-- Local path (bpm == 0): when the sidecar is healthy, ONE /analyze call
+  the analyzer call; discarded after.
+- Local path (bpm == 0): when the analyzer is healthy, ONE /analyze call
   provides BOTH aubio bpm and mood_scores (decode-once design in the
-  sidecar); when it is not, the NumPy floor runs locally and the sidecar
-  mood call (if any) runs concurrently, bounded by min(remaining budget,
-  MOOD_TIMEOUT).
+  analyzer); when it is not, the NumPy floor runs locally and the
+  analyzer mood call (if any) runs concurrently, bounded by min(remaining
+  budget, ANALYZER_TIMEOUT).
 - Deezer path (bpm > 0): publish immediately; mood enrichment is a
   separate post-publish step (async_enrich) the sensor triggers — mood
   never delays this publish (and cannot change the BPM anyway).
@@ -37,21 +37,22 @@ from typing import Any
 
 from . import math as bpm_math
 from .analyzer import NumpyAnalyzer
+from .analyzer_client import AnalyzerClient
 from .const import (
     ANALYSIS_TIMEOUT,
-    CONF_MOOD_ANALYZER_URL,
-    CONF_MOOD_API_TOKEN,
+    CONF_ANALYZER_API_TOKEN,
+    CONF_ANALYZER_URL,
+    CONF_DISCOVERED_ANALYZER_URL,
     CONF_OCTAVE_DISAMBIGUATION,
     EXPECTED_MOOD_SCORES,
     OCTAVE_GENRE_MOOD,
     OCTAVE_OFF,
     OVERALL_BUDGET,
+    SOURCE_ANALYZER,
     SOURCE_DEEZER,
     SOURCE_NUMPY,
-    SOURCE_SIDECAR,
 )
 from .deezer import DeezerClient, parse_artist_title
-from .sidecar_client import SidecarClient
 from .store import BpmCache, cache_key
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,10 +84,11 @@ class BpmPipeline:
         self._deezer = DeezerClient(session)
         self._cache = cache
         self._analyzer = NumpyAnalyzer()
-        self._sidecar = SidecarClient(
+        self._analyzer_client = AnalyzerClient(
             session,
-            options.get(CONF_MOOD_ANALYZER_URL),
-            options.get(CONF_MOOD_API_TOKEN),
+            options.get(CONF_ANALYZER_URL),
+            options.get(CONF_ANALYZER_API_TOKEN),
+            options.get(CONF_DISCOVERED_ANALYZER_URL),
         )
         self._octave_mode = options.get(CONF_OCTAVE_DISAMBIGUATION, "genre_only")
         self._mood_ready = False
@@ -94,19 +96,21 @@ class BpmPipeline:
         self._current_token: str | None = None
 
     async def async_setup(self) -> None:
-        """Probe sidecar availability (never blocks the sensor)."""
+        """Probe analyzer availability (never blocks the sensor)."""
         if self._octave_mode == OCTAVE_GENRE_MOOD:
-            self._mood_ready = await self._sidecar.async_detect() is not None
+            self._mood_ready = (
+                await self._analyzer_client.async_detect() is not None
+            )
             if not self._mood_ready:
                 _LOGGER.info(
-                    "Sidecar analyzer not detected — falling back to "
-                    "genre-only octave disambiguation"
+                    "Analyzer not detected — falling back to genre-only "
+                    "octave disambiguation"
                 )
 
     @property
-    def sidecar_client(self) -> SidecarClient:
-        """Expose the sidecar client (sensor post-publish enrichment)."""
-        return self._sidecar
+    def analyzer_client(self) -> AnalyzerClient:
+        """Expose the analyzer client (sensor post-publish enrichment)."""
+        return self._analyzer_client
 
     @property
     def mood_enabled(self) -> bool:
@@ -143,7 +147,7 @@ class BpmPipeline:
     ) -> dict[str, Any] | None:
         """Post-publish mood enrichment (Deezer-metadata path only).
 
-        Downloads the preview once, POSTs it to the sidecar, caches the
+        Downloads the preview once, POSTs it to the analyzer, caches the
         mood payload per-ISRC alongside the BPM, and returns the mood
         attribute dict for the sensor's second state write. Returns None
         on any failure — never raises, never retries.
@@ -163,7 +167,7 @@ class BpmPipeline:
         if not preview:
             return None
 
-        payload = await self._sidecar.async_analyze(preview)
+        payload = await self._analyzer_client.async_analyze(preview)
         if not payload:
             return None
 
@@ -178,7 +182,7 @@ class BpmPipeline:
 
     @staticmethod
     def _scores_from_tags(payload: dict[str, Any] | None) -> dict[str, float] | None:
-        """Derive the five-signal mapping from sidecar mood tags."""
+        """Derive the five-signal mapping from analyzer mood tags."""
         if not payload:
             return None
         tags = payload.get("mood_tags") or []
@@ -191,7 +195,7 @@ class BpmPipeline:
 
     @classmethod
     def _mood_attrs_from_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:
-        """Map a sidecar /analyze payload to sensor mood attributes.
+        """Map an analyzer /analyze payload to sensor mood attributes.
 
         mood_scores is ATOMIC (Catch 1): consumed only when present AND
         complete over EXPECTED_MOOD_SCORES. A missing key read as 0.0
@@ -208,10 +212,10 @@ class BpmPipeline:
             "danceability": payload.get("danceability"),
             "analyzed_seconds": payload.get("analyzed_seconds"),
             "model_versions": payload.get("model_versions"),
-            "source": "sidecar",
+            "source": "analyzer",
         }
         # Explicit five-signal dict from the dedicated mood heads — the
-        # sidecar emits it only when ALL five heads are healthy.
+        # analyzer emits it only when ALL five heads are healthy.
         scores = payload.get("mood_scores")
         if not (
             isinstance(scores, dict)
@@ -405,30 +409,30 @@ class BpmPipeline:
                 return None
 
             # Two-tier local analysis on the one preview:
-            # 1. Sidecar healthy → ONE /analyze call returns BOTH the
+            # 1. Analyzer healthy → ONE /analyze call returns BOTH the
             #    aubio bpm and the atomic mood_scores (decode-once design
-            #    in the sidecar). Bounded by the remaining budget.
-            # 2. Sidecar down/unneeded → NumPy floor locally; mood call
+            #    in the analyzer). Bounded by the remaining budget.
+            # 2. Analyzer down/unneeded → NumPy floor locally; mood call
             #    (when enabled but tempo-less) runs concurrently.
             remaining = max(0.1, deadline - time.monotonic())
             bpm_raw: float | None = None
             mood_payload: dict[str, Any] | None = None
 
             if self.mood_enabled and self._mood_ready:
-                sidecar_payload = await self._sidecar.async_analyze_file(
+                analyzer_payload = await self._analyzer_client.async_analyze_file(
                     tmp_path
                 )
-                if sidecar_payload:
-                    bpm_raw = sidecar_payload.get("bpm")
-                    mood_payload = sidecar_payload
+                if analyzer_payload:
+                    bpm_raw = analyzer_payload.get("bpm")
+                    mood_payload = analyzer_payload
 
             if not bpm_raw or bpm_raw <= 0:
-                # Sidecar tempo unavailable (not installed, degraded, or
+                # Analyzer tempo unavailable (not installed, degraded, or
                 # tempo failed) → NumPy floor + optional concurrent mood.
                 mood_task = None
                 if self.mood_enabled and self._mood_ready and not mood_payload:
                     mood_task = asyncio.ensure_future(
-                        self._sidecar.async_analyze_file(tmp_path)
+                        self._analyzer_client.async_analyze_file(tmp_path)
                     )
                 bpm_task = asyncio.ensure_future(
                     self._analyzer.get_bpm(self._hass, tmp_path)
@@ -467,7 +471,7 @@ class BpmPipeline:
                 max(mood_scores, key=mood_scores.get) if mood_scores else None
             )
             source = (
-                SOURCE_SIDECAR
+                SOURCE_ANALYZER
                 if mood_payload is not None and mood_payload.get("bpm")
                 else SOURCE_NUMPY
             )

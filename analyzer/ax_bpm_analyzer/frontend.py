@@ -1,6 +1,6 @@
 """Pure-NumPy log-mel front end — bit-exact replica of TensorflowInputMusiCNN.
 
-NO essentia in the sidecar. Every constant and algorithm here is a faithful
+NO essentia in the analyzer. Every constant and algorithm here is a faithful
 port of the Essentia C++ source (master branch), confirmed against the
 Phase 0 goldens (per-clip patch sha256s in goldens_meta.json):
 

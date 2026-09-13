@@ -5,7 +5,7 @@ Key: ISRC when previously matched, else a hash of the normalized
 publishes immediately — no network calls, no analysis.
 
 Schema v2 (Phase 1): legacy Essentia SVM mood fields (mood_scores,
-mood_label) are dropped on load; BPM fields are kept. Sidecar mood
+mood_label) are dropped on load; BPM fields are kept. Analyzer mood
 results are cached per-ISRC alongside BPM under the same keys.
 """
 

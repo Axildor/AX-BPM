@@ -1,4 +1,4 @@
-"""Sidecar test bootstrap: goldens, clip regeneration, skip-guards."""
+"""Analyzer test bootstrap: goldens, clip regeneration, skip-guards."""
 
 from __future__ import annotations
 

@@ -1,8 +1,8 @@
-"""aubio tempo detection on pre-decoded samples — the sidecar tempo tier.
+"""aubio tempo detection on pre-decoded samples — the analyzer tempo tier.
 
 Port of the integration's former `analyzer.py::_analyze_with_package`
 (specdiff, win 1024 / hop 512, 44.1 kHz) to operate on in-memory float32
-arrays instead of `aubio.source` — the sidecar decodes ONCE (decode.py)
+arrays instead of `aubio.source` — the analyzer decodes ONCE (decode.py)
 and feeds aubio hop-sized chunks directly, exactly like the reference
 demo loop (`samples, read = src(); is_beat = tempo(samples)`).
 

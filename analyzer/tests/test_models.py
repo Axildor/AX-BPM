@@ -9,8 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ax_bpm_sidecar import config as cfg
-from ax_bpm_sidecar.models import ModelManager
+from ax_bpm_analyzer import config as cfg
+from ax_bpm_analyzer.models import ModelManager
 
 
 def _write_valid(tmp_path: Path, name: str) -> None:

@@ -3,7 +3,7 @@
 Covers:
 - mocked Deezer search/track/album (incl. the bpm:0 case)
 - Deezer metadata bpm published as-is, never corrected
-- bpm:0 → local analysis fallback path (sidecar tempo+mood, NumPy floor)
+- bpm:0 → local analysis fallback path (analyzer tempo+mood, NumPy floor)
 - cache hit → no network calls
 - failure → None (never 0)
 - synthetic audio fixture exercising the NumPy floor end-to-end
@@ -35,8 +35,8 @@ class ResolutionResultStub:
         self.attrs = {"isrc": "GBDUW0000059"}
 
 
-def _make_sidecar_bpm_payload(bpm: float) -> dict:
-    """Sidecar /analyze payload with a tempo result (bpm + mood empty)."""
+def _make_analyzer_bpm_payload(bpm: float) -> dict:
+    """Analyzer /analyze payload with a tempo result (bpm + mood empty)."""
     return {
         "bpm": bpm,
         "bpm_confidence": 0.9,
@@ -110,9 +110,9 @@ def make_pipeline(mock_session, mock_cache, mood_ready=False, octave_mode="genre
     pipeline._cache = mock_cache
     pipeline._analyzer = MagicMock()
     pipeline._analyzer.get_bpm = AsyncMock(return_value=None)
-    pipeline._sidecar = MagicMock()
-    pipeline._sidecar.async_analyze = AsyncMock(return_value=None)
-    pipeline._sidecar.async_analyze_file = AsyncMock(return_value=None)
+    pipeline._analyzer_client = MagicMock()
+    pipeline._analyzer_client.async_analyze = AsyncMock(return_value=None)
+    pipeline._analyzer_client.async_analyze_file = AsyncMock(return_value=None)
     pipeline._mood_ready = mood_ready
     pipeline._octave_mode = octave_mode
     pipeline._lock = asyncio.Lock()
@@ -237,9 +237,9 @@ async def test_deezer_bpm_published_as_is(mock_session, mock_cache):
 
 @pytest.mark.asyncio
 async def test_deezer_bpm_zero_falls_through_to_local(mock_session, mock_cache):
-    """bpm:0 → local analysis fallback (sidecar tempo+mood mocked).
+    """bpm:0 → local analysis fallback (analyzer tempo+mood mocked).
 
-    With the sidecar healthy, ONE /analyze call returns BOTH the aubio
+    With the analyzer healthy, ONE /analyze call returns BOTH the aubio
     bpm and the mood tags; its scores feed the octave tree so the first
     publish is mood-corrected.
     """
@@ -248,9 +248,9 @@ async def test_deezer_bpm_zero_falls_through_to_local(mock_session, mock_cache):
     pipeline._deezer.get_track = AsyncMock(return_value=TRACK_RESPONSE_BPM0)
     pipeline._deezer.get_album_genres = AsyncMock(return_value=["Electro"])
     pipeline._deezer.download_preview = AsyncMock(return_value=True)
-    pipeline._sidecar.async_analyze_file = AsyncMock(
+    pipeline._analyzer_client.async_analyze_file = AsyncMock(
         return_value={
-            **_make_sidecar_bpm_payload(87.0),
+            **_make_analyzer_bpm_payload(87.0),
             "mood_tags": [
                 {"tag": "aggressive", "score": 0.9},
                 {"tag": "party", "score": 0.8},
@@ -265,29 +265,29 @@ async def test_deezer_bpm_zero_falls_through_to_local(mock_session, mock_cache):
         result = await pipeline.async_resolve("Daft Punk", "Test Track", 224.0)
 
     assert result is not None
-    assert result.source == "sidecar"
+    assert result.source == "analyzer"
     assert result.attrs["bpm_raw"] == 87.0
     # I = (.9+.8+.7+0)/4 = 0.6 ≥ T_APPLY → doubled (mood path).
     assert result.bpm == 174.0
     assert result.attrs["octave_rule"] == "mood_double"
     assert result.attrs["preview_analyzed"] is True
-    # The sidecar was consulted exactly once, on the same preview file.
-    assert pipeline._sidecar.async_analyze_file.await_count == 1
-    # The NumPy floor never ran (sidecar tempo won).
+    # The analyzer was consulted exactly once, on the same preview file.
+    assert pipeline._analyzer_client.async_analyze_file.await_count == 1
+    # The NumPy floor never ran (analyzer tempo won).
     pipeline._analyzer.get_bpm.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_local_path_sidecar_timeout_degrades_to_numpy(mock_session, mock_cache):
-    """Sidecar tempo failed → NumPy floor + concurrent mood (mocked)."""
+async def test_local_path_analyzer_timeout_degrades_to_numpy(mock_session, mock_cache):
+    """Analyzer tempo failed → NumPy floor + concurrent mood (mocked)."""
     pipeline = make_pipeline(mock_session, mock_cache, mood_ready=True)
     pipeline._deezer.find_match = AsyncMock(return_value=SEARCH_RESPONSE["data"][0])
     pipeline._deezer.get_track = AsyncMock(return_value=TRACK_RESPONSE_BPM0)
     pipeline._deezer.get_album_genres = AsyncMock(return_value=["Electro"])
     pipeline._deezer.download_preview = AsyncMock(return_value=True)
-    # Sidecar returns a payload WITHOUT bpm (tempo head failed) → fallback.
-    pipeline._sidecar.async_analyze_file = AsyncMock(
-        return_value=_make_sidecar_bpm_payload(None)
+    # Analyzer returns a payload WITHOUT bpm (tempo head failed) → fallback.
+    pipeline._analyzer_client.async_analyze_file = AsyncMock(
+        return_value=_make_analyzer_bpm_payload(None)
     )
     pipeline._analyzer.get_bpm = AsyncMock(return_value=87.0)
 
@@ -306,7 +306,7 @@ async def test_local_path_sidecar_timeout_degrades_to_numpy(mock_session, mock_c
 
 @pytest.mark.asyncio
 async def test_deezer_path_post_publish_enrichment(mock_session, mock_cache):
-    """Deezer-metadata path: async_enrich POSTs the preview to the sidecar
+    """Deezer-metadata path: async_enrich POSTs the preview to the analyzer
     and returns mood attrs; the BPM itself is never touched."""
     pipeline = make_pipeline(mock_session, mock_cache, mood_ready=True)
     pipeline._deezer.find_match = AsyncMock(return_value=SEARCH_RESPONSE["data"][0])
@@ -317,7 +317,7 @@ async def test_deezer_path_post_publish_enrichment(mock_session, mock_cache):
     assert result is not None and result.source == "deezer_metadata"
 
     pipeline._deezer.download_preview_bytes = AsyncMock(return_value=b"mp3bytes")
-    pipeline._sidecar.async_analyze = AsyncMock(
+    pipeline._analyzer_client.async_analyze = AsyncMock(
         return_value={
             "mood_tags": [
                 {"tag": "aggressive", "score": 0.9},
@@ -340,7 +340,7 @@ async def test_deezer_path_post_publish_enrichment(mock_session, mock_cache):
         "Daft Punk", "Test Track", 224.0, result
     )
     assert mood_attrs is not None
-    assert mood_attrs["source"] == "sidecar"
+    assert mood_attrs["source"] == "analyzer"
     assert mood_attrs["valence"] == 0.4
     assert mood_attrs["arousal"] == 0.8
     assert mood_attrs["danceability"] == 0.7
@@ -350,7 +350,7 @@ async def test_deezer_path_post_publish_enrichment(mock_session, mock_cache):
     assert result.bpm == 123.0
     # Mood cached alongside the BPM.
     put_entry = mock_cache.async_put.await_args.args[1]
-    assert put_entry["source"] == "sidecar"
+    assert put_entry["source"] == "analyzer"
     assert put_entry["bpm"] == 123.0
 
 
@@ -362,7 +362,7 @@ async def test_enrichment_skipped_when_disabled_or_local(mock_session, mock_cach
     assert await pipeline.async_enrich("a", "b", None, result) is None
 
     pipeline._mood_ready = True
-    local = ResolutionResultStub(source="sidecar")
+    local = ResolutionResultStub(source="analyzer")
     assert await pipeline.async_enrich("a", "b", None, local) is None
     pipeline._deezer.download_preview_bytes.assert_not_called()
 
@@ -392,15 +392,15 @@ async def test_failed_match_after_local_track_never_reuses_preview(
     pipeline._deezer.find_match = AsyncMock(return_value=SEARCH_RESPONSE["data"][0])
     pipeline._deezer.get_track = AsyncMock(return_value=TRACK_RESPONSE_BPM0)
     pipeline._deezer.get_album_genres = AsyncMock(return_value=["Electro"])
-    pipeline._sidecar.async_analyze_file = AsyncMock(
-        return_value=_make_sidecar_bpm_payload(87.0)
+    pipeline._analyzer_client.async_analyze_file = AsyncMock(
+        return_value=_make_analyzer_bpm_payload(87.0)
     )
 
     with patch("ax_bpm.pipeline.tempfile.mkstemp", return_value=(99, "/tmp/fake.mp3")), patch(
         "ax_bpm.pipeline.os.close"
     ), patch("ax_bpm.pipeline.os.unlink"):
         result_a = await pipeline.async_resolve("Daft Punk", "Track A", 224.0)
-    assert result_a is not None and result_a.source == "sidecar"
+    assert result_a is not None and result_a.source == "analyzer"
 
     # Track B: Deezer lookup fails entirely (no match at all).
     pipeline._deezer.find_match = AsyncMock(return_value=None)
