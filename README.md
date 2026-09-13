@@ -1,3 +1,8 @@
+[![GitHub Release](https://img.shields.io/github/v/release/adix992/AX-BPM?style=flat-square)](https://github.com/adix992/AX-BPM/releases)
+[![HACS Status](https://img.shields.io/badge/HACS-Custom-orange.svg?style=flat-square)](https://github.com/hacs/integration)
+[![Add-on Build](https://img.shields.io/github/actions/workflow/status/adix992/AX-BPM/addon-build.yml?branch=main&label=Add-on%20Build&style=flat-square)](https://github.com/adix992/AX-BPM/actions/workflows/addon-build.yml)
+[![Buy me a tea](https://img.shields.io/badge/Buy_me_a_tea-☕-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/axildor)
+
 # AX BPM for Home Assistant
 
 A custom Home Assistant integration that publishes a sensor holding the
@@ -8,34 +13,27 @@ engine, but works with any automation that needs a live BPM value.
 **All network requests are anonymous** — the Deezer public API needs no API
 key, no account, and no OAuth. Setup is UI-only; no YAML required.
 
+> 🔧 Deep-dive reference (octave-correction math, analyzer internals,
+> development workflow): see **[advancedreadme.md](advancedreadme.md)**.
+
+---
+
 ## How it works
 
 When the tracked `media_player` starts a new track (debounced a few seconds),
 AX BPM resolves its tempo in this order:
 
-1. **Cache** — a persistent store (`.storage`, survives restarts) keyed on
-   the track's ISRC (or a hash of artist/title/duration). A hit publishes
-   instantly with zero network calls.
-2. **Deezer metadata** — an anonymous field-quoted search
-   (`artist:"X" track:"Y"`, with a cleaned-title retry for
-   "(Remix)"/"feat." variants), a duration-filtered candidate pick
-   (±3 s, highest popularity wins), then the track's `bpm` field.
-   If Deezer reports a BPM, it is published as-is.
+1. **Cache** — a persistent store (`.storage`, survives restarts). A hit
+   publishes instantly with zero network calls.
+2. **Deezer metadata** — an anonymous search, then the track's `bpm`
+   field. If Deezer reports a BPM, it is published as-is.
 3. **Local analysis** — Deezer frequently reports `bpm: 0` even for
    top-tier catalog. In that case AX BPM downloads the track's ~30 s
    preview once and analyzes it locally. With the **AX BPM Analyzer
    add-on** installed, ONE `/analyze` call returns both the **aubio**
-   tempo (60 / median inter-beat interval) and the mood scores, so the
-   first published BPM is already mood-corrected. Without the add-on, a
-   built-in **NumPy** tempo estimator (spectral-flux onsets +
-   autocorrelation) provides the BPM, degrading octave gating to
-   genre-only.
-
-> **Deezer coverage limitation**: Deezer's metadata BPM only covers the
-> part of its catalog that reports a non-zero `bpm` field — coverage is
-> incomplete and varies by release (many tracks report `bpm: 0`). The
-> local analysis tier exists precisely for this gap; a track with no
-> Deezer BPM and no decodable preview publishes `unknown`, never 0.
+   tempo and the mood scores, so the first published BPM is already
+   mood-corrected. Without the add-on, a built-in **NumPy** tempo
+   estimator provides the BPM, degrading octave gating to genre-only.
 
 On any failure the sensor goes `unknown` — it **never publishes 0**.
 
@@ -54,11 +52,12 @@ music itself says so:
   downtempo, acoustic, …) **or** the analyzer scores it as calm
   (relaxed/acoustic average ≥ 0.6).
 - **Everything else is published unchanged.** At most one correction per
-  track; ambiguity always resolves to "no correction" — a wrong dance band
-  from a false correction is worse than one from an ambiguous estimate.
+  track; ambiguity always resolves to "no correction".
 
 Deezer metadata BPM is never corrected. Corrections apply only to the
-locally analyzed estimate.
+locally analyzed estimate. The exact windows, thresholds, and signal
+formulas are documented in
+[advancedreadme.md](advancedreadme.md#octave-disambiguation--exact-math).
 
 ## Installation
 
@@ -75,16 +74,12 @@ locally analyzed estimate.
 
 Tempo (aubio-grade) and mood analysis both run in the **AX BPM Analyzer**
 add-on — a small FastAPI + ONNX Runtime service (no TensorFlow, no
-essentia) that decodes the track preview once at 44.1 kHz, runs the
-aubio tempo detector on it, downsamples to 16 kHz, and returns `bpm`
-(+ `bpm_confidence`), mood scores, mood tags, and danceability in one
-response.
-
-**Image size**: the published add-on image is **516 MB (amd64)** /
-**539 MB (aarch64)** uncompressed (dominated by the ONNX Runtime +
-scipy + numpy stack; no dev/test dependencies, no compiler, no model
-weights — models download to `/data` at first start). CI verifies the
-runtime image contains no dev dependencies on every build.
+essentia library — the DSP front end is a pure-NumPy port of the Essentia
+algorithms, and the ONNX models are downloaded from Essentia's public
+model zoo at first start). It decodes the track preview once at 44.1 kHz,
+runs the aubio tempo detector on it, downsamples to 16 kHz, and returns
+`bpm` (+ `bpm_confidence`), mood scores, mood tags, and danceability in
+one response.
 
 **Install the add-on**
 1. Settings → Add-ons → ⋮ → *Repositories* → add this repository URL.
@@ -120,20 +115,17 @@ runtime image contains no dev dependencies on every build.
 - `bpm` + `bpm_confidence` — aubio tempo on the 44.1 kHz preview
   (independent of mood: a tempo failure omits these without touching
   `mood_scores`, and vice versa).
-- `mood_scores` — five signals (`aggressive`, `party`, `relaxed`,
-  `electronic`, `acoustic`) from dedicated ONNX mood heads. This object
+- `mood_scores` — the **five gating signals** (`aggressive`, `party`,
+  `relaxed`, `electronic`, `acoustic`) from dedicated ONNX mood heads.
+  These five are the set used for octave gating; the add-on additionally
+  returns 56 jamendo `mood_tags`, `danceability`, and
+  `valence`/`arousal` as attribute-layer data. The `mood_scores` object
   is **atomic**: it is emitted only when all five heads are healthy, and
   the integration uses it only when complete — a partial failure falls
   back to genre-only gating rather than reading a missing signal as 0.0.
 - `mood_tags` — rich jamendo moodtheme tags (attribute layer only,
   never used for gating).
 - `danceability` — degrades independently (omitted if its head is down).
-
-**Bit-exactness scope**: the add-on's DSP front end is validated
-bit-exact against the essentia reference on the committed golden clips
-only. Production decode/resample (miniaudio/ffmpeg) is a
-tolerance-bounded equivalent — live-audio mood outputs are never claimed
-bit-exact.
 
 ## Configuration
 
@@ -148,9 +140,7 @@ Settings → Devices & Services → **Add Integration** → **AX BPM**:
 
 The setup form shows a connection status line with the analyzer
 auto-detect result. Existing installs with the legacy genre/mood toggles
-migrate automatically on the next options save (genre+mood → "Genre +
-mood", genre-only → "Genre only", both off → "Off"). Existing installs
-with the old `mood_analyzer_url` / `mood_api_token` settings migrate
+or the old `mood_analyzer_url` / `mood_api_token` settings migrate
 automatically on upgrade.
 
 ## Sensor
@@ -174,61 +164,21 @@ relaxed/acoustic averages) with arousal as tie-breaker.
 - Mood attributes never delay the BPM publish: on the Deezer-metadata
   path they arrive as a second state write after the BPM is published.
 
-## Dependency footprint
+---
 
-The base install has **no extra dependencies** — Deezer matching and the
-cache work out of the box, and **local BPM analysis works out of the box**
-too: a built-in NumPy tempo estimator (spectral-flux onsets +
-autocorrelation) decodes previews via the `ffmpeg` binary that ships with
-official Home Assistant images (or the `miniaudio`/`soundfile` wheels when
-installed).
+## ☕ Support the Project
 
-The analyzer is a **two-tier design**:
+I'm a solo developer on disability building Home Assistant integrations
+and add-ons independently. Your support keeps servers online, API quotas
+funded, and the black tea brewing while I debug Python.
 
-1. **AX BPM Analyzer add-on (premium tier)** — when installed and
-   reachable, ONE `/analyze` call provides aubio-grade tempo AND mood in a
-   single request (source attribute: `analyzer`).
-2. **Built-in NumPy floor (basic tier)** — always available, no compiled
-   dependencies (source attribute: `numpy`).
+If this integration is useful to you, there's no obligation — but any
+support is highly appreciated.
 
-A missing analyzer never delays or blocks the sensor. aubio lives
-exclusively inside the AX BPM Analyzer add-on — the integration never
-imports it.
+[![Buy me a tea](https://img.shields.io/badge/Buy_me_a_tea-on_Ko--fi-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/axildor)
 
-Mood analysis is provided by the **AX BPM Analyzer add-on** (ONNX-based,
-no TensorFlow in Home Assistant). When the add-on is unreachable, mood
-attributes are omitted and octave disambiguation degrades to genre-only —
-one info log, no retry, the BPM sensor is unaffected.
+---
 
-## Non-goals
+## License
 
-No blanket tempo folding (only the whitelisted, mood/genre-gated math
-above), no TensorFlow models, no Spotify Web API, no realtime beat
-streaming, no Music Assistant coupling.
-
-## Development
-
-The analyzer service lives in `analyzer/` (FastAPI service) with HA add-on
-packaging in `addon/`. The devcontainer is Alpine/musl, where
-`onnxruntime` is not installable (no musllinux wheels) — testing follows
-a three-tier model:
-
-- **Tier 1 (musl workspace)**: everything except real ONNX sessions.
-  `pytest analyzer/tests -q` — ONNX tests skip with a reason.
-- **Tier 2 (glibc container, iteration only, never the gate)**:
-
-  ```sh
-  docker run --rm -p 8099:8099 -v axbpm-models:/data \
-    -e AXBPM_API_TOKEN=devtoken \
-    -v "$PWD/analyzer:/src" -w /src \
-    python:3.12-slim sh -c \
-    "pip install -r requirements.txt && python -m ax_bpm_analyzer.api"
-  ```
-
-- **Tier 3 (CI, authoritative)**: `.github/workflows/analyzer-golden-validation.yml`
-  runs the full suite with `AXBPM_REQUIRE_ONNX=1` and a zero-skip guard
-  on the golden files; any skip fails the job.
-
-Model weights are never committed — they download at first start into
-`/data` (or the `axbpm-models` volume) and are verified against pinned
-sha256 checksums from `analyzer/ax_bpm_analyzer/config.py`.
+MIT
