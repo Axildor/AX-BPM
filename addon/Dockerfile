@@ -21,6 +21,12 @@ RUN pip wheel --no-cache-dir miniaudio==1.71 -w /wheels
 # includes numpy/arrayobject.h unconditionally, and python:3.12 ships no
 # setuptools — so --no-build-isolation requires setuptools + wheel + the
 # pinned numpy present IN the stage before the aubio wheel build.
+# aubio 0.4.9 predates numpy 2.0's const-qualified PyUFuncGenericFunction
+# signature; GCC 14 (trixie base) makes -Wincompatible-pointer-types a
+# hard error, so downgrade it to a warning for this legacy source
+# (building against numpy 1.x instead would be ABI-incompatible at
+# runtime with the pinned numpy 2.5.3).
+ENV CFLAGS="-Wno-error=incompatible-pointer-types"
 RUN pip install --no-cache-dir numpy==2.5.3 setuptools wheel \
     && pip wheel --no-cache-dir --no-build-isolation aubio==0.4.9 -w /wheels
 

@@ -57,6 +57,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsamplerate0 ffmpeg
 
       - name: Install pinned dependencies
+        # CFLAGS: aubio 0.4.9 predates numpy 2's const-qualified ufunc
+        # signature; GCC 14 makes the resulting -Wincompatible-pointer-
+        # types a hard error (GCC 13 on ubuntu-24.04 only warns). Keep
+        # the downgrade explicit so a runner GCC bump cannot break CI.
+        env:
+          CFLAGS: "-Wno-error=incompatible-pointer-types"
         run: |
           # aubio is source-only (no wheels on PyPI): its setup.py build
           # needs numpy headers + setuptools IN-ENV, so pre-build it
