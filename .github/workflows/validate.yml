@@ -43,10 +43,13 @@ jobs:
       - name: HACS action
         # category: integration — this repo's custom_components/ax_bpm is
         # the HACS-installable unit (the add-on is distributed via the
-        # Add-on Store, not HACS).
+        # Add-on Store, not HACS). GITHUB_TOKEN env is REQUIRED by the
+        # action (it queries the repo's releases).
         uses: hacs/action@main
         with:
           category: integration
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   hassfest:
     name: hassfest
