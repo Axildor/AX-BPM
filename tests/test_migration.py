@@ -13,6 +13,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+
 from ax_bpm.const import (
     CONF_ANALYZER_API_TOKEN,
     CONF_ANALYZER_URL,

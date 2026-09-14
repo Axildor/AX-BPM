@@ -270,7 +270,7 @@ class BpmPipeline:
                 self._resolve_deezer(artist, title, duration, key),
                 timeout=max(0.1, deadline - time.monotonic()),
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             result, match = None, None
         if result is not None:
             _LOGGER.info(
@@ -295,7 +295,7 @@ class BpmPipeline:
                 ),
                 timeout=max(0.1, deadline - time.monotonic()),
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _LOGGER.debug("Overall budget exceeded for %s - %s", artist, title)
             return None
         if result is None:

@@ -132,7 +132,7 @@ async def analyze(request: Request, file: UploadFile = _FILE_PARAM) -> JSONRespo
                 asyncio.to_thread(_analyze_sync, data),
                 timeout=cfg.ANALYZE_TIMEOUT_SECONDS,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise HTTPException(status_code=503, detail="analysis timeout") from None
         except ValueError as err:
             raise HTTPException(status_code=422, detail=f"undecodable audio: {err}") from None

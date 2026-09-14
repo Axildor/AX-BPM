@@ -13,6 +13,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
 from ax_bpm.analyzer_client import AnalyzerClient
 from ax_bpm.config_flow import _migrate_legacy_toggles
 from ax_bpm.const import (

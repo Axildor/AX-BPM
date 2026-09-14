@@ -83,7 +83,7 @@ class NumpyAnalyzer:
                 loop.run_in_executor(None, self._analyze_sync, path),
                 timeout=ANALYSIS_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _LOGGER.debug("tempo analysis timed out for %s", path)
             return None
 

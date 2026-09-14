@@ -181,7 +181,7 @@ class InferenceEngine:
         if theme is not None and len(theme) == len(cfg.MOODTHEME_CLASSES):
             tags = [
                 {"tag": cls, "score": round(float(score), 4)}
-                for cls, score in zip(cfg.MOODTHEME_CLASSES, theme)
+                for cls, score in zip(cfg.MOODTHEME_CLASSES, theme, strict=False)
                 if float(score) >= cfg.MOOD_TAG_THRESHOLD
             ]
             tags.sort(key=lambda t: t["score"], reverse=True)

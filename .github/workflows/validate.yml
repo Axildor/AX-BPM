@@ -1,0 +1,78 @@
+# HACS + hassfest + ruff validation for the AX BPM integration.
+#
+# Three lightweight jobs (all ubuntu-latest, no model downloads):
+#   1. hacs/action  — the same validation HACS runs on custom-repo
+#                     submission (hacs.json, manifest, structure).
+#   2. hassfest     — Home Assistant's own integration validator
+#                     (manifest.json, strings.json ↔ translations).
+#   3. ruff         — lint + format check (ruff is already a pinned dev
+#                     dependency in analyzer/requirements-dev.txt; this
+#                     is the first place it is actually executed).
+name: validate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "custom_components/**"
+      - "analyzer/**"
+      - "tests/**"
+      - "hacs.json"
+      - "ruff.toml"
+      - ".github/workflows/validate.yml"
+  pull_request:
+    paths:
+      - "custom_components/**"
+      - "analyzer/**"
+      - "tests/**"
+      - "hacs.json"
+      - "ruff.toml"
+      - ".github/workflows/validate.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  hacs:
+    name: HACS validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: HACS action
+        # category: integration — this repo's custom_components/ax_bpm is
+        # the HACS-installable unit (the add-on is distributed via the
+        # Add-on Store, not HACS).
+        uses: hacs/action@main
+        with:
+          category: integration
+
+  hassfest:
+    name: hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run hassfest validation
+        uses: home-assistant/actions/hassfest@master
+
+  ruff:
+    name: ruff lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff (pinned to the dev-requirements pin)
+        run: pip install ruff==0.16.7
+
+      # ruff format is deliberately NOT gated here: the codebase predates
+      # any formatter and `ruff format --check .` would reformat 28 files
+      # (a mass reformat). The [format] section in ruff.toml stays so a
+      # future opt-in is consistent.
+      - name: ruff check
+        run: ruff check .

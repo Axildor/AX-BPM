@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from ax_bpm.deezer import DeezerClient, clean_title, parse_artist_title
 from ax_bpm.math import RULE_NONE
 from ax_bpm.pipeline import BpmPipeline

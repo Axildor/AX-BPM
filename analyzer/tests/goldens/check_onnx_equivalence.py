@@ -210,7 +210,7 @@ def main() -> None:
             return sess, in_name, out_name, in_rank
 
         heads = {}
-        for head_key, out_dim in (
+        for head_key, _out_dim in (
             ("moodtheme_head", MOODTHEME_DIM),
             ("danceability_head", DANCEABILITY_DIM),
         ):

@@ -117,7 +117,7 @@ class AnalyzerClient:
                 if resp.status != 200:
                     return None
                 return await resp.json(content_type=None)
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        except (TimeoutError, aiohttp.ClientError, ValueError):
             return None
 
     async def async_health(self) -> dict[str, Any] | None:
@@ -178,11 +178,6 @@ class AnalyzerClient:
             # Hard outer timeout: guarantees the single attempt can never
             # hang past ANALYZER_TIMEOUT regardless of transport behavior.
             return await asyncio.wait_for(_post(), timeout=ANALYZER_TIMEOUT)
-        except (
-            aiohttp.ClientError,
-            asyncio.TimeoutError,
-            OSError,
-            ValueError,
-        ) as err:
+        except (TimeoutError, aiohttp.ClientError, OSError, ValueError) as err:
             _LOGGER.debug("AX BPM analyzer /analyze failed: %s", err)
             return None

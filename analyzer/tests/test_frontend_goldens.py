@@ -26,8 +26,6 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ax_bpm_analyzer import config as cfg
-from ax_bpm_analyzer import frontend
 from conftest import (
     CLIP_SAMPLE_RATE,
     GOLDENS_DIR,
@@ -35,6 +33,9 @@ from conftest import (
     resample_libsamplerate,
     sha256_bytes,
 )
+
+from ax_bpm_analyzer import config as cfg
+from ax_bpm_analyzer import frontend
 
 TOL = 1e-3  # abs tolerance on log-mel subsample values
 

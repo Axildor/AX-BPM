@@ -15,6 +15,7 @@ Covers every acceptance case from the spec:
 from __future__ import annotations
 
 import pytest
+
 from ax_bpm.const import HIGH_WINDOW, LOW_WINDOW
 from ax_bpm.math import (
     RULE_GENRE_DOUBLE,

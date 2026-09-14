@@ -12,6 +12,7 @@ import wave
 from pathlib import Path
 
 import numpy as np
+
 from ax_bpm.analyzer import NumpyAnalyzer, analyzer_available
 from ax_bpm.decode import decode_available, decode_mono
 from ax_bpm.tempo_numpy import estimate_bpm

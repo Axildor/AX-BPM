@@ -14,10 +14,11 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from conftest import require_onnx  # noqa: F401 — guard semantics shared
+
 from ax_bpm_analyzer import config as cfg
 from ax_bpm_analyzer.inference import InferenceEngine
 from ax_bpm_analyzer.models import ModelManager
-from conftest import require_onnx  # noqa: F401 — guard semantics shared
 
 
 class _StubSession:

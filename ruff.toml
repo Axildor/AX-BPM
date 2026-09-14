@@ -1,0 +1,42 @@
+# Ruff configuration for AX-BPM.
+#
+# Scope: the three Python trees (integration, analyzer service, tests).
+# The rule set is intentionally conservative — E/W/F/I/UP/B — so the
+# first CI run is a real gate without a mass reformat of the existing
+# codebase. Tighten deliberately, never wholesale.
+#
+# line-length 120: the codebase was written before any formatter was
+# enforced; 88 would flag 52 existing lines (a mass reformat), 120
+# flags only genuinely excessive lines. `ruff format` is deliberately
+# NOT gated in CI for the same reason (it would reformat 28 files).
+target-version = "py312"
+line-length = 120
+
+[lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes (undefined names, unused imports)
+    "I",   # isort import ordering
+    "UP",  # pyupgrade (py3.12 idioms)
+    "B",   # flake8-bugbear (likely bugs)
+]
+
+[lint.per-file-ignores]
+# Tests: bare asserts are the point (B011), and the golden-gate test
+# imports AFTER require_onnx() by design (E402 — the import must not
+# run when onnxruntime is missing).
+"tests/*" = ["B011"]
+"analyzer/tests/*" = ["B011"]
+"analyzer/tests/test_inference_goldens.py" = ["E402"]
+# One-shot golden-harness scripts (freeze/check/compose): reference
+# tooling, not shipped code — long URL/constant lines are fine.
+"analyzer/tests/goldens/*" = ["E501", "B007"]
+
+[lint.isort]
+# First-party packages: the integration package and the analyzer package.
+known-first-party = ["ax_bpm", "ax_bpm_analyzer"]
+
+[format]
+# Not CI-gated (see header); kept here so a future opt-in is consistent.
+quote-style = "double"
