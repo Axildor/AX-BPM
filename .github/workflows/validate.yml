@@ -45,9 +45,15 @@ jobs:
         # the HACS-installable unit (the add-on is distributed via the
         # Add-on Store, not HACS). GITHUB_TOKEN env is REQUIRED by the
         # action (it queries the repo's releases).
+        #
+        # ignore: brands — the brands check (domain registered in
+        # home-assistant/brands) is only REQUIRED when submitting to
+        # hacs/default; custom repositories are not required to have
+        # brand assets. Re-enable when submitting for default inclusion.
         uses: hacs/action@main
         with:
           category: integration
+          ignore: brands
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
