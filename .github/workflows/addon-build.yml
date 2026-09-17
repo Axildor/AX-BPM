@@ -110,3 +110,31 @@ jobs:
             echo "DEFECT: test suite present in the runtime image"; exit 1
           fi
           echo "PROBE PASS: no dev deps, no test suite in the runtime image"
+
+      # Boot smoke test: the image must actually START and serve /health.
+      # (The dev-deps probe above passed while the service could not even
+      # import its own package — ModuleNotFoundError at container start.
+      # This assertion is the regression guard for that class of defect.)
+      - name: Probe — service must boot and serve /health
+        run: |
+          set -e
+          echo "== import check =="
+          docker run --rm axbpm-probe:amd64 \
+            python -c "import ax_bpm_analyzer.api; print('import OK')"
+          echo "== boot + /health check =="
+          cid=$(docker run -d -e AXBPM_SKIP_BOOTSTRAP=1 axbpm-probe:amd64)
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          ok=""
+          for i in $(seq 1 30); do
+            if docker exec "$cid" python -c "import urllib.request as u; r = u.urlopen('http://127.0.0.1:8099/health', timeout=2); assert r.status == 200, r.status; print('health OK')" 2>/dev/null; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$ok" ]; then
+            echo "DEFECT: service did not serve /health within 30s"
+            docker logs "$cid" || true
+            exit 1
+          fi
+          echo "PROBE PASS: service boots and /health responds 200"

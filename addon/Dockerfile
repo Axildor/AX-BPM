@@ -46,8 +46,14 @@ COPY analyzer/ax_bpm_analyzer analyzer/ax_bpm_analyzer
 COPY addon/run.sh addon/run.sh
 RUN chmod +x addon/run.sh
 
+# The package lives at /usr/src/axbpm/analyzer/ax_bpm_analyzer (repo layout
+# preserved for dev-image parity), so `python -m ax_bpm_analyzer.api` needs
+# the analyzer/ dir on sys.path — CWD alone does not expose it.
+ENV PYTHONPATH=/usr/src/axbpm/analyzer
 ENV AXBPM_DATA_DIR=/data
 VOLUME /data
 EXPOSE 8099
 
-CMD ["python", "-m", "ax_bpm_analyzer.api"]
+# run.sh is the real entrypoint: it parses /data/options.json (HA passes
+# add-on options there, NOT as env vars) and execs uvicorn.
+CMD ["/usr/src/axbpm/addon/run.sh"]

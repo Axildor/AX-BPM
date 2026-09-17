@@ -76,7 +76,10 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    unloaded = hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    # async_unload_platforms is a coroutine — it MUST be awaited (an
+    # un-awaited coroutine object is truthy, so cleanup ran while the
+    # platforms never unloaded and HA reported the unload as failed).
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         ir.async_delete_issue(hass, DOMAIN, ISSUE_NO_ANALYZER)
         data = hass.data[DOMAIN].pop(entry.entry_id, {})
