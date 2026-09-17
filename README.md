@@ -98,17 +98,19 @@ one response.
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `api_token` | *(empty)* | Shared secret for `/analyze`. **Set this** — with an empty token the add-on answers 401 to every analysis request (one clear log hint). `/health` stays open for auto-detect. |
+| `api_token` | *(empty)* | **Optional — no API key needed.** Not a provider key: a shared secret you invent yourself. Left empty, authentication is disabled and the add-on works with zero configuration. If set, `/analyze` requires it as a Bearer token — paste the same value into the integration's *Analyzer API token* field. `/health` stays open for auto-detect. |
 | `max_analyze_seconds` | 60 | Previews are truncated to this length before inference (latency guard, mainly for aarch64). |
 | `intra_op_threads` | 2 | ONNX Runtime intra-op threads. The add-on shares the host CPU with Home Assistant core — keep this small. |
 
 **Connect the integration**
 1. In the AX BPM integration options, set octave disambiguation to
    **Genre + mood**.
-2. Paste the same token into the new **Analyzer API token** field.
-3. Leave the analyzer URL empty for auto-detect. On Home Assistant OS the
+2. Leave the analyzer URL empty for auto-detect. On Home Assistant OS the
    add-on announces itself to the Supervisor, so the integration finds it
    automatically; otherwise it falls back to `homeassistant.local:8099`.
+3. **No token needed by default.** Only if you set an `api_token` in the
+   add-on options, paste the same value into the integration's
+   **Analyzer API token** field.
 
 **What the add-on returns**
 

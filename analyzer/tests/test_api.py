@@ -85,11 +85,17 @@ def test_analyze_401_wrong_token(client):
     assert resp.status_code == 401
 
 
-def test_analyze_401_when_server_token_empty(client, monkeypatch):
-    """Empty configured token → 401 (with logged hint)."""
+def test_analyze_open_when_server_token_empty(client, monkeypatch):
+    """Empty configured token → auth DISABLED (zero-config default).
+
+    Matches the integration's documented contract: "Leave empty if the
+    add-on has no token set." Any/no Bearer value is accepted.
+    """
     monkeypatch.setattr(cfg, "API_TOKEN", "")
     resp = _post(client, b"fake-audio", token="anything")
-    assert resp.status_code == 401
+    assert resp.status_code != 401
+    resp = _post(client, b"fake-audio", token=None)
+    assert resp.status_code != 401
 
 
 def test_analyze_413_over_cap(client, monkeypatch):

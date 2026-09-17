@@ -23,7 +23,9 @@ from pathlib import Path
 HOST = "0.0.0.0"
 PORT = 8099
 
-# Shared-secret auth. Empty token → /analyze answers 401 (logged hint once);
+# Shared-secret auth. Empty token → auth DISABLED on /analyze (zero-config
+# default, matching the integration's "leave empty" contract; logged hint
+# once). A non-empty token re-enables the constant-time Bearer check.
 # /health stays open (auto-detect + config-flow status line need it).
 API_TOKEN = os.environ.get("AXBPM_API_TOKEN", "")
 

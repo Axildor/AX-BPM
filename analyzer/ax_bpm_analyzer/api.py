@@ -6,7 +6,9 @@
   hard per-request timeout, malformed audio → 422.
 - /health: unauthenticated (auto-detect + config-flow status line need
   it), per-model state, partial availability.
-- Empty configured token → /analyze answers 401 with a logged hint (once).
+- Empty configured token → auth DISABLED (zero-config default; matches
+  the integration's "leave empty if the add-on has no token set" contract).
+  A logged hint (once) notes the open endpoint.
 """
 
 from __future__ import annotations
@@ -73,17 +75,23 @@ app = FastAPI(title="AX BPM Analyzer", version="1.0.0", lifespan=lifespan)
 
 
 def _check_token(request: Request) -> None:
-    """Bearer shared-secret check (constant-time). /health stays open."""
+    """Bearer shared-secret check (constant-time). /health stays open.
+
+    Empty configured token → auth disabled (zero-config default, matching
+    the integration's documented "leave empty" contract). A token set in
+    the add-on options re-enables the Bearer check.
+    """
     global _TOKEN_HINT_LOGGED
     expected = cfg.API_TOKEN
     if not expected:
         if not _TOKEN_HINT_LOGGED:
             _LOGGER.warning(
-                "AX BPM Analyzer: no api_token configured — /analyze returns "
-                "401 until a token is set in the add-on configuration"
+                "AX BPM Analyzer: no api_token configured — /analyze is "
+                "UNAUTHENTICATED. Set a token in the add-on configuration "
+                "to require a Bearer shared secret."
             )
             _TOKEN_HINT_LOGGED = True
-        raise HTTPException(status_code=401, detail="server has no api_token configured")
+        return
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="missing bearer token")
