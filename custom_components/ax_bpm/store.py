@@ -138,3 +138,12 @@ class BpmCache:
         entry = {k: v for k, v in result.items() if k != "preview_url"}
         self._data[key] = entry
         await self._store.async_save(self._data)
+
+    async def async_clear(self) -> int:
+        """Wipe the entire cache. Returns the number of entries removed."""
+        count = len(self._data)
+        if count:
+            self._data = {}
+            await self._store.async_save(self._data)
+            _LOGGER.info("AX BPM cache: cleared %d entr(ies)", count)
+        return count

@@ -21,6 +21,13 @@ OCTAVE_GENRE_ONLY = "genre_only"
 OCTAVE_GENRE_MOOD = "genre_mood"
 OCTAVE_MODES = [OCTAVE_OFF, OCTAVE_GENRE_ONLY, OCTAVE_GENRE_MOOD]
 
+# Manual per-track BPM overrides (halve/double buttons + services).
+# Stored in their own HA Store, keyed by normalized artist|title —
+# see overrides.py. An override beats every automatic source.
+OVERRIDE_STORAGE_KEY = "ax_bpm_overrides"
+RULE_MANUAL_HALF = "manual_half"
+RULE_MANUAL_DOUBLE = "manual_double"
+
 # Manual analyzer URL override (empty = auto-detect only).
 CONF_ANALYZER_URL = "analyzer_url"
 
@@ -84,12 +91,13 @@ DECODE_SAMPLE_RATE = 22050
 # ---------------------------------------------------------------------------
 # Platforms / sensor metadata
 # ---------------------------------------------------------------------------
-PLATFORMS = ["sensor"]
+PLATFORMS = ["sensor", "button"]
 UNIT_BPM = "BPM"
 SOURCE_DEEZER = "deezer_metadata"
 SOURCE_ANALYZER = "analyzer"
 SOURCE_NUMPY = "numpy"
 SOURCE_CACHE = "cache"
+SOURCE_OVERRIDE = "manual_override"
 
 # AX BPM Analyzer add-on endpoints.
 # Auto-detect order: manual analyzer_url override → discovered URL

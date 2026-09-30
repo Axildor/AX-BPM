@@ -113,6 +113,7 @@ def make_pipeline(mock_session, mock_cache, mood_ready=False, octave_mode="genre
     pipeline._itunes.find_match = AsyncMock(return_value=None)
     pipeline._itunes.download_preview = AsyncMock(return_value=True)
     pipeline._cache = mock_cache
+    pipeline._overrides = None  # no override store in these tests
     pipeline._analyzer = MagicMock()
     pipeline._analyzer.get_bpm = AsyncMock(return_value=None)
     pipeline._analyzer_client = MagicMock()

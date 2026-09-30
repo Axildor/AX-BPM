@@ -48,12 +48,16 @@ from .const import (
     OCTAVE_GENRE_MOOD,
     OCTAVE_OFF,
     OVERALL_BUDGET,
+    RULE_MANUAL_DOUBLE,
+    RULE_MANUAL_HALF,
     SOURCE_ANALYZER,
     SOURCE_DEEZER,
     SOURCE_NUMPY,
+    SOURCE_OVERRIDE,
 )
 from .deezer import DeezerClient, parse_artist_title
 from .itunes import ItunesClient, preview_suffix
+from .overrides import BpmOverrideStore
 from .store import BpmCache, cache_key
 
 _LOGGER = logging.getLogger(__name__)
@@ -80,11 +84,13 @@ class BpmPipeline:
         session,
         cache: BpmCache,
         options: dict[str, Any],
+        overrides: BpmOverrideStore | None = None,
     ) -> None:
         self._hass = hass
         self._deezer = DeezerClient(session)
         self._itunes = ItunesClient(session)
         self._cache = cache
+        self._overrides = overrides
         self._analyzer = NumpyAnalyzer()
         self._analyzer_client = AnalyzerClient(
             session,
@@ -139,6 +145,51 @@ class BpmPipeline:
             return await self._resolve_inner(
                 track_artist, track_title, duration, token
             )
+
+    @property
+    def overrides(self) -> BpmOverrideStore | None:
+        """The manual override store (None when not wired up)."""
+        return self._overrides
+
+    async def async_apply_correction(
+        self,
+        artist: str,
+        title: str,
+        current_bpm: float,
+        factor: float,
+    ) -> float:
+        """Store a manual halve/double correction for this track.
+
+        factor: 0.5 (halve) or 2.0 (double). Returns the corrected BPM.
+        The correction is applied to the CURRENTLY PUBLISHED bpm (the
+        value the user sees), not to any underlying raw estimate.
+        """
+        if factor not in (0.5, 2.0):
+            raise ValueError(f"correction factor must be 0.5 or 2.0, got {factor}")
+        corrected = current_bpm * factor
+        rule = RULE_MANUAL_HALF if factor == 0.5 else RULE_MANUAL_DOUBLE
+        if self._overrides is None:
+            raise RuntimeError("override store not configured")
+        await self._overrides.async_put(
+            artist, title, corrected, rule, current_bpm
+        )
+        return corrected
+
+    async def async_clear_override(self, artist: str, title: str) -> bool:
+        """Remove the manual override for this track. True when one existed."""
+        if self._overrides is None:
+            return False
+        return await self._overrides.async_remove(artist, title)
+
+    async def async_clear_cache(self) -> int:
+        """Wipe the BPM cache (overrides untouched). Returns entries removed."""
+        return await self._cache.async_clear()
+
+    async def async_clear_overrides(self) -> int:
+        """Wipe ALL manual overrides. Returns entries removed."""
+        if self._overrides is None:
+            return 0
+        return await self._overrides.async_clear()
 
     async def async_enrich(
         self,
@@ -250,6 +301,24 @@ class BpmPipeline:
         token: str,
     ) -> ResolutionResult | None:
         deadline = time.monotonic() + OVERALL_BUDGET
+
+        # 0. Manual override — beats every automatic source. Checked
+        # before the BPM cache so a user correction wins even over a
+        # previously cached Deezer value. Keyed by artist|title only
+        # (no duration bucket), so it survives duration drift.
+        if self._overrides is not None:
+            override = self._overrides.get(artist, title)
+            if override and override.get("bpm"):
+                _LOGGER.info(
+                    "AX BPM override hit for %s - %s → %.1f BPM (%s)",
+                    artist, title, override["bpm"], override.get("rule"),
+                )
+                return ResolutionResult(override["bpm"], **{
+                    "source": SOURCE_OVERRIDE,
+                    "octave_rule": override.get("rule"),
+                    "original_bpm": override.get("original_bpm"),
+                    "track": f"{artist} - {title}",
+                })
 
         # 1. Cache lookup — publish immediately, no network, no analysis.
         key = cache_key(None, artist, title, duration)

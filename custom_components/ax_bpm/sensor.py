@@ -91,6 +91,36 @@ class AxBpmSensor(SensorEntity):
                 self.hass, [self._media_player_id], self._on_media_change
             )
         )
+        # Service hooks (services.py): immediate re-resolve after a
+        # halve/double/clear mutation, and a getter for the currently
+        # published BPM (the value a correction applies to).
+        self.hass.data.setdefault(DOMAIN, {}).setdefault(
+            self._entry.entry_id, {}
+        )["refresh_sensor"] = self._refresh_now
+        self.hass.data[self._entry.entry_id]["get_sensor_bpm"] = (
+            self._get_published_bpm
+        )
+
+    @callback
+    def _refresh_now(self) -> None:
+        """Re-resolve the current track immediately (no debounce).
+
+        Called by the services after a store mutation so the correction
+        is visible at once. Skips when nothing is playing — the next
+        real track change resolves normally.
+        """
+        state = self.hass.states.get(self._media_player_id)
+        if state is None or state.state != STATE_PLAYING:
+            return
+        # Force the next resolution to run even if the track tuple is
+        # unchanged (the store changed, not the track).
+        self._last_track = None
+        self._cancel_debounce()
+        self.hass.async_create_task(self._async_resolve())
+
+    def _get_published_bpm(self) -> float | None:
+        """The currently published BPM (None when unknown)."""
+        return self._attr_native_value
 
     @callback
     def _on_media_change(self, event) -> None:

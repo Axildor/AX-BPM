@@ -1,0 +1,45 @@
+# AX BPM services — manual BPM corrections + cache management.
+#
+# All services act on the configured media player's CURRENT track; no
+# parameters. Halve/double apply to the currently published BPM and
+# persist as a manual override (survives restarts, beats every automatic
+# source). clear_cache wipes the BPM cache only; clear_overrides wipes
+# the manual overrides only — the two stores are independent.
+
+halve_bpm:
+  name: Halve BPM
+  description: >-
+    Halve the currently published BPM for the playing track and persist
+    the correction. Use when the sensor reports double the real tempo
+    (e.g. 150 instead of 75). No effect when the sensor is unknown.
+  fields: {}
+
+double_bpm:
+  name: Double BPM
+  description: >-
+    Double the currently published BPM for the playing track and persist
+    the correction. Use when the sensor reports half the real tempo
+    (e.g. 75 instead of 150). No effect when the sensor is unknown.
+  fields: {}
+
+clear_override:
+  name: Clear BPM override
+  description: >-
+    Remove the manual halve/double override for the currently playing
+    track, restoring automatic resolution on the next play.
+  fields: {}
+
+clear_cache:
+  name: Clear BPM cache
+  description: >-
+    Wipe the persistent BPM cache (all resolved track values). Manual
+    overrides are NOT affected. The next track change re-resolves from
+    Deezer / local analysis.
+  fields: {}
+
+clear_overrides:
+  name: Clear all BPM overrides
+  description: >-
+    Remove ALL manual halve/double overrides. The BPM cache is NOT
+    affected.
+  fields: {}

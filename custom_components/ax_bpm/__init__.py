@@ -12,7 +12,9 @@ from homeassistant.helpers import issue_registry as ir
 from .analyzer import analyzer_available
 from .const import CONF_MEDIA_PLAYER, DOMAIN, PLATFORMS
 from .migration import async_migrate_entry  # noqa: F401 — HA entry point
+from .overrides import BpmOverrideStore
 from .pipeline import BpmPipeline
+from .services import async_setup_services
 from .store import BpmCache
 
 _LOGGER = logging.getLogger(__name__)
@@ -49,10 +51,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     session = aiohttp.ClientSession()
     cache = BpmCache(hass)
     await cache.async_load()
+    overrides = BpmOverrideStore(hass)
+    await overrides.async_load()
     # Options override data; merged view drives the dropdown + URL fields
     # (legacy toggle entries migrate on the next options save).
     pipeline = BpmPipeline(
-        hass, session, cache, {**entry.data, **entry.options}
+        hass, session, cache, {**entry.data, **entry.options}, overrides
     )
     await pipeline.async_setup()
     _update_analyzer_issue(hass, entry)
@@ -60,10 +64,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "session": session,
         "cache": cache,
+        "overrides": overrides,
         "pipeline": pipeline,
         "media_player": entry.data.get(CONF_MEDIA_PLAYER),
     }
 
+    await async_setup_services(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True

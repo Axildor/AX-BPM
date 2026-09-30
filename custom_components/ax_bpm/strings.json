@@ -54,5 +54,43 @@
         "genre_mood": "Genre + mood"
       }
     }
+  },
+  "services": {
+    "halve_bpm": {
+      "name": "Halve BPM",
+      "description": "Halves the currently published BPM for the playing track and persists the correction. Use when the sensor reports double the real tempo (e.g. 150 instead of 75)."
+    },
+    "double_bpm": {
+      "name": "Double BPM",
+      "description": "Doubles the currently published BPM for the playing track and persists the correction. Use when the sensor reports half the real tempo (e.g. 75 instead of 150)."
+    },
+    "clear_override": {
+      "name": "Clear BPM override",
+      "description": "Removes the manual halve/double override for the currently playing track, restoring automatic resolution."
+    },
+    "clear_cache": {
+      "name": "Clear BPM cache",
+      "description": "Wipes the persistent BPM cache. Manual overrides are not affected."
+    },
+    "clear_overrides": {
+      "name": "Clear all BPM overrides",
+      "description": "Removes all manual halve/double overrides. The BPM cache is not affected."
+    }
+  },
+  "entity": {
+    "button": {
+      "btn_halve": {
+        "name": "Halve BPM"
+      },
+      "btn_double": {
+        "name": "Double BPM"
+      },
+      "btn_clear_cache": {
+        "name": "Clear BPM cache"
+      },
+      "btn_clear_overrides": {
+        "name": "Clear BPM overrides"
+      }
+    }
   }
 }

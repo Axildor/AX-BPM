@@ -145,13 +145,36 @@ auto-detect result. Existing installs with the legacy genre/mood toggles
 or the old `mood_analyzer_url` / `mood_api_token` settings migrate
 automatically on upgrade.
 
+## Fixing a wrong BPM (manual overrides)
+
+Occasionally a track's stored tempo is an octave off — e.g. Alicia Keys
+"A Woman's Worth" is really ~76 BPM but reports 150, making a dancing
+avatar look silly. While the song is playing, fix it with one press:
+
+- **Halve BPM** / **Double BPM** buttons (on the AX BPM device) or the
+  `ax_bpm.halve_bpm` / `ax_bpm.double_bpm` services — corrects the
+  currently published value and **persists the correction** for that
+  song. The override beats every automatic source (Deezer, analyzer,
+  cache) and survives restarts.
+- **Clear BPM override** (`ax_bpm.clear_override`) — removes the
+  correction for the current track, restoring automatic resolution.
+- **Clear BPM cache** (`ax_bpm.clear_cache`) — wipes all resolved track
+  values (overrides are kept). Useful after a Deezer-side data change.
+- **Clear BPM overrides** (`ax_bpm.clear_overrides`) — removes ALL
+  manual corrections (the cache is kept).
+
+Halve/double apply to the value the sensor is currently showing; if the
+sensor is `unknown` there is nothing to correct (a warning is logged).
+Overridden tracks show `source: manual_override` and the rule
+(`manual_half` / `manual_double`) in the sensor attributes.
+
 ## Sensor
 
 `sensor.ax_bpm` — state is the final BPM (unit `BPM`, measurement class).
 Attributes include the source (`deezer_metadata` / `analyzer` / `numpy` /
-`cache`), track name, ISRC, Deezer track id, match rank, the
-pre-correction raw BPM, album genre, mood scores, intensity/calmness, the
-octave rule applied, and the last update time.
+`cache` / `manual_override`), track name, ISRC, Deezer track id, match
+rank, the pre-correction raw BPM, album genre, mood scores,
+intensity/calmness, the octave rule applied, and the last update time.
 
 When the analyzer responds (Deezer-metadata path, or the concurrent local
 path), additional mood attributes are published:
