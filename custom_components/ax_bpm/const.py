@@ -117,3 +117,10 @@ EXPECTED_MOOD_SCORES = frozenset({
 
 # Deezer endpoints (anonymous, no key required for public read endpoints).
 DEEZER_API = "https://api.deezer.com"
+
+# Consecutive zero-result Deezer searches before a one-time WARNING is
+# logged. Deezer failures are otherwise debug-only (invisible at HA's
+# default log level) — e.g. the 2026-09 artist: field-operator break
+# produced weeks of silent "unknown" states. Reset on the first
+# successful search.
+DEEZER_EMPTY_WARN_THRESHOLD = 5

@@ -15,11 +15,60 @@ import re
 
 import aiohttp
 
-from .const import DEEZER_API, DURATION_TOLERANCE, NETWORK_TIMEOUT
+from .const import (
+    DEEZER_API,
+    DEEZER_EMPTY_WARN_THRESHOLD,
+    DURATION_TOLERANCE,
+    NETWORK_TIMEOUT,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 _HEADERS = {"User-Agent": "HomeAssistant/AX-BPM (anonymous)"}
+
+# Consecutive Deezer failures (HTTP errors, timeouts, or zero-result
+# searches) before the one-time WARNING fires. Module-level so the
+# counter survives DeezerClient re-instantiation (config-entry reloads)
+# — a persistent API break must stay visible. Deezer failures are
+# otherwise debug-only (invisible at HA's default log level): the 2026-09
+# artist: field-operator break produced weeks of silent "unknown" states.
+_EMPTY_SEARCH_WARNED = False
+_EMPTY_SEARCH_STREAK = 0
+
+
+def _note_deezer_failure(reason: str) -> None:
+    """Record one failed Deezer interaction; warn once past the threshold."""
+    global _EMPTY_SEARCH_WARNED, _EMPTY_SEARCH_STREAK
+    _EMPTY_SEARCH_STREAK += 1
+    if (
+        not _EMPTY_SEARCH_WARNED
+        and _EMPTY_SEARCH_STREAK >= DEEZER_EMPTY_WARN_THRESHOLD
+    ):
+        _EMPTY_SEARCH_WARNED = True
+        _LOGGER.warning(
+            "AX BPM: %d consecutive Deezer failures (last: %s) — the "
+            "Deezer API may have changed, is rate-limiting this IP, or "
+            "is unreachable. BPM will stay unknown until requests "
+            "succeed again (enable debug logging for details).",
+            _EMPTY_SEARCH_STREAK,
+            reason,
+        )
+
+
+def _note_deezer_success() -> None:
+    """Reset the failure streak AND the one-time flag on any success.
+
+    Re-arming matters: a FUTURE break (days/weeks later) must warn again
+    instead of being silenced by the previous episode's warning.
+    """
+    global _EMPTY_SEARCH_WARNED, _EMPTY_SEARCH_STREAK
+    if _EMPTY_SEARCH_STREAK:
+        _LOGGER.debug(
+            "Deezer streak reset after %d consecutive failures",
+            _EMPTY_SEARCH_STREAK,
+        )
+    _EMPTY_SEARCH_STREAK = 0
+    _EMPTY_SEARCH_WARNED = False
 
 # Title suffixes stripped for the cleaned-title retry query.
 _TITLE_NOISE = re.compile(
@@ -68,10 +117,14 @@ class DeezerClient:
             ) as resp:
                 if resp.status != 200:
                     _LOGGER.debug("Deezer %s returned HTTP %s", path, resp.status)
+                    _note_deezer_failure(f"HTTP {resp.status} on {path}")
                     return None
-                return await resp.json()
+                payload = await resp.json()
+                _note_deezer_success()
+                return payload
         except (aiohttp.ClientError, TimeoutError) as err:
             _LOGGER.debug("Deezer request failed for %s: %s", path, err)
+            _note_deezer_failure(f"{type(err).__name__} on {path}")
             return None
 
     async def search_tracks(
@@ -94,10 +147,13 @@ class DeezerClient:
                 _LOGGER.debug(
                     "Deezer search %r → %d results", query, len(results)
                 )
+                _note_deezer_success()
                 return results
+
         _LOGGER.debug(
             "Deezer search: no results for %r (all query variants)", title
         )
+        _note_deezer_failure(f"no results for {title!r}")
         return []
 
     async def find_match(

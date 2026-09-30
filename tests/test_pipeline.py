@@ -186,6 +186,74 @@ async def test_search_tracks_falls_back_to_plain_text():
 
 
 @pytest.mark.asyncio
+async def test_search_tracks_empty_streak_warns_once_then_resets():
+    """N consecutive empty searches → one WARNING; success resets the streak."""
+    import ax_bpm.deezer as deezer_mod
+
+    client = DeezerClient(MagicMock())
+
+    async def fake_get_json(path, params=None):
+        return {"data": []}  # every query variant → 0 results
+
+    client._get_json = fake_get_json
+
+    with (
+        patch.object(deezer_mod, "_EMPTY_SEARCH_STREAK", 0),
+        patch.object(deezer_mod, "_EMPTY_SEARCH_WARNED", False),
+        patch.object(deezer_mod._LOGGER, "warning") as mock_warn,
+    ):
+        # Below the threshold: no warning.
+        for _ in range(deezer_mod.DEEZER_EMPTY_WARN_THRESHOLD - 1):
+            assert await client.search_tracks("A", "T") == []
+        mock_warn.assert_not_called()
+
+        # Reaching the threshold: exactly one warning.
+        assert await client.search_tracks("A", "T") == []
+        mock_warn.assert_called_once()
+
+        # Still failing: no repeat warning (one-time).
+        assert await client.search_tracks("A", "T") == []
+        mock_warn.assert_called_once()
+
+        # Success resets the streak and re-arms the warning.
+        async def fake_get_json_ok(path, params=None):
+            return {"data": [{"id": 1, "title": "T"}]}
+
+        client._get_json = fake_get_json_ok
+        assert await client.search_tracks("A", "T")
+        assert deezer_mod._EMPTY_SEARCH_STREAK == 0
+
+        client._get_json = fake_get_json
+        with patch.object(deezer_mod._LOGGER, "warning") as mock_warn2:
+            for _ in range(deezer_mod.DEEZER_EMPTY_WARN_THRESHOLD):
+                assert await client.search_tracks("A", "T") == []
+            mock_warn2.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_http_failures_count_toward_the_streak():
+    """HTTP errors / timeouts also feed the failure streak (rate-limit case)."""
+    import ax_bpm.deezer as deezer_mod
+
+    client = DeezerClient(MagicMock())
+
+    async def fake_get_json(path, params=None):
+        return None  # _get_json returns None on HTTP != 200 / client error
+
+    client._get_json = fake_get_json
+
+    with (
+        patch.object(deezer_mod, "_EMPTY_SEARCH_STREAK", 0),
+        patch.object(deezer_mod, "_EMPTY_SEARCH_WARNED", False),
+        patch.object(deezer_mod._LOGGER, "warning") as mock_warn,
+    ):
+        for _ in range(deezer_mod.DEEZER_EMPTY_WARN_THRESHOLD):
+            assert await client.search_tracks("A", "T") == []
+        mock_warn.assert_called_once()
+        assert "rate-limiting" in str(mock_warn.call_args)
+
+
+@pytest.mark.asyncio
 async def test_find_match_rejects_wrong_artist():
     """Plain-text results from a different artist are never matched."""
     client = DeezerClient(MagicMock())
