@@ -53,6 +53,7 @@ from .const import (
     SOURCE_NUMPY,
 )
 from .deezer import DeezerClient, parse_artist_title
+from .itunes import ItunesClient, preview_suffix
 from .store import BpmCache, cache_key
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ class BpmPipeline:
     ) -> None:
         self._hass = hass
         self._deezer = DeezerClient(session)
+        self._itunes = ItunesClient(session)
         self._cache = cache
         self._analyzer = NumpyAnalyzer()
         self._analyzer_client = AnalyzerClient(
@@ -285,6 +287,26 @@ class BpmPipeline:
             )
             return None
 
+        # 2b. iTunes fallback — preview/genre provider only (Apple exposes
+        # no tempo). Fires when Deezer yielded no match at all OR a match
+        # without a preview URL: the local path needs audio to analyze.
+        # The pending Deezer match (bpm==0 metadata) wins when it already
+        # carries a preview; iTunes only fills the gap.
+        if not match or not match.get("preview_url"):
+            try:
+                itunes_match = await asyncio.wait_for(
+                    self._itunes.find_match(artist, title, duration),
+                    timeout=max(0.1, deadline - time.monotonic()),
+                )
+            except TimeoutError:
+                itunes_match = None
+            if itunes_match:
+                _LOGGER.debug(
+                    "iTunes fallback match for %s - %s (id=%s)",
+                    artist, title, itunes_match.get("itunes_track_id"),
+                )
+                match = itunes_match
+
         # 3. Local analysis fallback (Deezer bpm == 0 or no confident match).
         # Only runs when THIS resolution produced a bpm==0 match; a failed
         # Deezer lookup must never reuse a previous track's match data.
@@ -382,6 +404,17 @@ class BpmPipeline:
         }
         return None, pending
 
+    async def _download_preview(self, preview_url: str, dest_path: str) -> bool:
+        """Download a preview via the provider that produced the URL.
+
+        iTunes preview URLs (audio-ssl.itunes.apple.com) must NOT be sent
+        to the Deezer client — route by the match's provider field,
+        defaulting to Deezer for legacy/unknown URLs.
+        """
+        if "itunes.apple.com" in preview_url or "audio-ssl.itunes" in preview_url:
+            return await self._itunes.download_preview(preview_url, dest_path)
+        return await self._deezer.download_preview(preview_url, dest_path)
+
     async def _resolve_local(
         self,
         artist: str,
@@ -397,15 +430,20 @@ class BpmPipeline:
             return None
 
         # Download the preview once — use immediately, never cache the URL.
-        # mkstemp does filesystem I/O — keep it off the event loop.
+        # mkstemp does filesystem I/O — keep it off the event loop. The
+        # suffix follows the preview URL (.m4a for iTunes AAC previews,
+        # .mp3 for Deezer) so the ffmpeg decode tier sniffs the container
+        # correctly.
         loop = asyncio.get_running_loop()
         fd, tmp_path = await loop.run_in_executor(
             None,
-            lambda: tempfile.mkstemp(suffix=".mp3", prefix="ax_bpm_"),
+            lambda: tempfile.mkstemp(
+                suffix=preview_suffix(preview_url), prefix="ax_bpm_"
+            ),
         )
         os.close(fd)
         try:
-            if not await self._deezer.download_preview(preview_url, tmp_path):
+            if not await self._download_preview(preview_url, tmp_path):
                 return None
 
             # Two-tier local analysis on the one preview:
@@ -481,10 +519,16 @@ class BpmPipeline:
                 track=f"{artist} - {title}",
                 isrc=match.get("isrc"),
                 deezer_track_id=match.get("deezer_track_id"),
+                itunes_track_id=match.get("itunes_track_id"),
+                provider=match.get("provider", "deezer"),
                 match_rank=match.get("match_rank"),
                 bpm_raw=bpm_raw,
                 genre=", ".join(genres) if genres else None,
-                genre_source="deezer_album" if genres else None,
+                genre_source=(
+                    f"{match.get('provider', 'deezer')}_album"
+                    if genres
+                    else None
+                ),
                 mood_scores=mood_scores,
                 mood_label=mood_label,
                 intensity=disambiguated["intensity"],

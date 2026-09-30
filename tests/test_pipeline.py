@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ax_bpm.deezer import DeezerClient, clean_title, parse_artist_title
+from ax_bpm.itunes import ItunesClient, map_genres, preview_suffix
 from ax_bpm.math import RULE_NONE
 from ax_bpm.pipeline import BpmPipeline
 from ax_bpm.store import BpmCache, cache_key
@@ -108,6 +109,9 @@ def make_pipeline(mock_session, mock_cache, mood_ready=False, octave_mode="genre
     pipeline._hass = MagicMock()
     pipeline._hass.config.path = MagicMock(return_value="/tmp/ax_bpm_models")
     pipeline._deezer = MagicMock(spec=DeezerClient)
+    pipeline._itunes = MagicMock(spec=ItunesClient)
+    pipeline._itunes.find_match = AsyncMock(return_value=None)
+    pipeline._itunes.download_preview = AsyncMock(return_value=True)
     pipeline._cache = mock_cache
     pipeline._analyzer = MagicMock()
     pipeline._analyzer.get_bpm = AsyncMock(return_value=None)
@@ -146,6 +150,117 @@ def test_parse_artist_title_fallback():
     )
     assert parse_artist_title(None, "No Separator Here") is None
     assert parse_artist_title(None, None) is None
+
+
+# ---------------------------------------------------------------------------
+# iTunes fallback client unit behavior
+# ---------------------------------------------------------------------------
+
+ITUNES_SEARCH_RESPONSE = {
+    "resultCount": 2,
+    "results": [
+        {
+            "trackId": 697195462,
+            "trackName": "One More Time",
+            "artistName": "Daft Punk",
+            "previewUrl": "https://audio-ssl.itunes.apple.com/x/1.m4a",
+            "trackTimeMillis": 320357,
+            "primaryGenreName": "Dance",
+        },
+        {
+            "trackId": 703078823,
+            "trackName": "One More Time (Short Radio Edit)",
+            "artistName": "Daft Punk",
+            "previewUrl": "https://audio-ssl.itunes.apple.com/x/2.m4a",
+            "trackTimeMillis": 235467,
+            "primaryGenreName": "Electronica",
+        },
+    ],
+}
+
+
+def test_preview_suffix_from_url():
+    assert preview_suffix("https://audio-ssl.itunes.apple.com/x/1.m4a") == ".m4a"
+    assert preview_suffix("https://audio-ssl.itunes.apple.com/x/1.m4p") == ".m4a"
+    assert preview_suffix("https://cdns-preview.dzcdn.net/stream/fake.mp3") == ".mp3"
+    assert preview_suffix("https://example.com/no-extension") == ".mp3"
+
+
+def test_map_genres_conservative_aliasing():
+    # Known aliases map onto the Deezer vocabulary.
+    assert map_genres(["Dance"]) == ["dance"]
+    assert map_genres(["Electronica"]) == ["electro"]
+    assert map_genres(["Hip-Hop/Rap"]) == ["hip-hop"]
+    assert map_genres(["Jungle/Drum'n'Bass"]) == ["drum & bass"]
+    # Unmapped genres pass through unchanged (they simply don't gate).
+    assert map_genres(["Metal"]) == ["Metal"]
+    assert map_genres(["Alternative"]) == ["Alternative"]
+    # Empty/None entries are dropped.
+    assert map_genres(["", None, "Dance"]) == ["dance"]
+
+
+@pytest.mark.asyncio
+async def test_itunes_find_match_artist_and_duration_filter():
+    client = ItunesClient(MagicMock())
+    client._get_json = AsyncMock(return_value=ITUNES_SEARCH_RESPONSE)
+
+    # duration 320.0 → first result (320357 ms) matches; second (235 s) is
+    # filtered out by the ±3s tolerance.
+    match = await client.find_match("Daft Punk", "One More Time", 320.0)
+    assert match is not None
+    assert match["provider"] == "itunes"
+    assert match["itunes_track_id"] == 697195462
+    assert match["preview_url"].endswith(".m4a")
+    assert match["genres"] == ["dance"]
+
+    # No duration → first verified candidate with a preview wins.
+    match = await client.find_match("Daft Punk", "One More Time", None)
+    assert match is not None
+    assert match["itunes_track_id"] == 697195462
+
+
+@pytest.mark.asyncio
+async def test_itunes_find_match_rejects_wrong_artist():
+    client = ItunesClient(MagicMock())
+    client._get_json = AsyncMock(return_value=ITUNES_SEARCH_RESPONSE)
+    assert await client.find_match("The Prodigy", "One More Time", None) is None
+
+
+@pytest.mark.asyncio
+async def test_itunes_find_match_skips_candidates_without_preview():
+    no_preview = {**ITUNES_SEARCH_RESPONSE["results"][0], "previewUrl": None}
+    client = ItunesClient(MagicMock())
+    client._get_json = AsyncMock(
+        return_value={
+            "resultCount": 2,
+            "results": [no_preview, ITUNES_SEARCH_RESPONSE["results"][1]],
+        }
+    )
+    # First candidate has no preview → skipped; second (radio edit) wins.
+    match = await client.find_match("Daft Punk", "One More Time", None)
+    assert match is not None
+    assert match["itunes_track_id"] == 703078823
+
+
+@pytest.mark.asyncio
+async def test_itunes_find_match_all_candidates_without_preview():
+    no_preview = {**ITUNES_SEARCH_RESPONSE["results"][0], "previewUrl": None}
+    client = ItunesClient(MagicMock())
+    client._get_json = AsyncMock(
+        return_value={"resultCount": 1, "results": [no_preview]}
+    )
+    # Every verified candidate lacks a previewUrl → None (no audio to
+    # analyze is useless to the local path).
+    assert await client.find_match("Daft Punk", "One More Time", None) is None
+
+
+@pytest.mark.asyncio
+async def test_itunes_find_match_no_results_returns_none():
+    client = ItunesClient(MagicMock())
+    client._get_json = AsyncMock(return_value={"resultCount": 0, "results": []})
+    assert await client.find_match("Daft Punk", "Obscure Track", None) is None
+    client._get_json = AsyncMock(return_value=None)  # HTTP failure
+    assert await client.find_match("Daft Punk", "Obscure Track", None) is None
 
 
 @pytest.mark.asyncio
@@ -559,3 +674,101 @@ def test_numpy_floor_end_to_end_synthetic(click_track_120):
     bpm = asyncio.run(analyzer.get_bpm(None, str(click_track_120)))
     assert bpm is not None
     assert abs(bpm - 120.0) < 5.0  # a few BPM of accuracy is sufficient
+
+
+# ---------------------------------------------------------------------------
+# iTunes fallback — pipeline integration
+# ---------------------------------------------------------------------------
+
+ITUNES_MATCH = {
+    "preview_url": "https://audio-ssl.itunes.apple.com/x/1.m4a",
+    "genres": ["dance"],
+    "itunes_track_id": 697195462,
+    "provider": "itunes",
+}
+
+
+@pytest.mark.asyncio
+async def test_deezer_no_match_itunes_fallback_resolves(mock_session, mock_cache):
+    """Deezer no match → iTunes preview → local analysis resolves.
+
+    Regression for the preview-URL single point of failure: without the
+    iTunes tier, a Deezer search failure left no audio to analyze and the
+    sensor went unknown.
+    """
+    pipeline = make_pipeline(mock_session, mock_cache, mood_ready=True)
+    pipeline._deezer.find_match = AsyncMock(return_value=None)
+    pipeline._itunes.find_match = AsyncMock(return_value=dict(ITUNES_MATCH))
+    pipeline._itunes.download_preview = AsyncMock(return_value=True)
+    pipeline._analyzer_client.async_analyze_file = AsyncMock(
+        return_value=_make_analyzer_bpm_payload(123.0)
+    )
+
+    with patch("ax_bpm.pipeline.tempfile.mkstemp", return_value=(99, "/tmp/fake.m4a")), patch(
+        "ax_bpm.pipeline.os.close"
+    ), patch("ax_bpm.pipeline.os.unlink"):
+        result = await pipeline.async_resolve("Daft Punk", "Test Track", 320.0)
+
+    assert result is not None
+    assert result.source == "analyzer"
+    assert result.bpm == 123.0
+    assert result.attrs["provider"] == "itunes"
+    assert result.attrs["itunes_track_id"] == 697195462
+    assert result.attrs["genre_source"] == "itunes_album"
+    # The iTunes client was consulted exactly once.
+    pipeline._itunes.find_match.assert_awaited_once()
+    pipeline._itunes.download_preview.assert_awaited_once()
+    # The Deezer client never downloaded anything (no match).
+    pipeline._deezer.download_preview.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_deezer_match_without_preview_uses_itunes(mock_session, mock_cache):
+    """Deezer bpm==0 match WITHOUT a preview → iTunes fills the gap.
+
+    The pending Deezer match metadata (isrc, deezer_track_id) is replaced
+    by the iTunes match — the local path needs audio, and the iTunes
+    match is the one that carries it.
+    """
+    pipeline = make_pipeline(mock_session, mock_cache, mood_ready=False)
+    pipeline._deezer.find_match = AsyncMock(return_value=SEARCH_RESPONSE["data"][0])
+    pipeline._deezer.get_track = AsyncMock(
+        return_value={**TRACK_RESPONSE_BPM0, "preview": None}
+    )
+    pipeline._itunes.find_match = AsyncMock(return_value=dict(ITUNES_MATCH))
+    pipeline._itunes.download_preview = AsyncMock(return_value=True)
+    pipeline._analyzer.get_bpm = AsyncMock(return_value=87.0)
+
+    with patch("ax_bpm.pipeline.tempfile.mkstemp", return_value=(99, "/tmp/fake.m4a")), patch(
+        "ax_bpm.pipeline.os.close"
+    ), patch("ax_bpm.pipeline.os.unlink"):
+        result = await pipeline.async_resolve("Daft Punk", "Test Track", 224.0)
+
+    assert result is not None
+    assert result.source == "numpy"
+    assert result.bpm == 87.0
+    assert result.attrs["provider"] == "itunes"
+    assert result.attrs["itunes_track_id"] == 697195462
+    # The Deezer match had no preview → iTunes was consulted.
+    pipeline._itunes.find_match.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_deezer_preview_wins_no_itunes_call(mock_session, mock_cache):
+    """Deezer bpm==0 match WITH a preview → iTunes is never consulted."""
+    pipeline = make_pipeline(mock_session, mock_cache, mood_ready=False)
+    pipeline._deezer.find_match = AsyncMock(return_value=SEARCH_RESPONSE["data"][0])
+    pipeline._deezer.get_track = AsyncMock(return_value=TRACK_RESPONSE_BPM0)
+    pipeline._deezer.get_album_genres = AsyncMock(return_value=["Electro"])
+    pipeline._deezer.download_preview = AsyncMock(return_value=True)
+    pipeline._analyzer.get_bpm = AsyncMock(return_value=87.0)
+
+    with patch("ax_bpm.pipeline.tempfile.mkstemp", return_value=(99, "/tmp/fake.mp3")), patch(
+        "ax_bpm.pipeline.os.close"
+    ), patch("ax_bpm.pipeline.os.unlink"):
+        result = await pipeline.async_resolve("Daft Punk", "Test Track", 224.0)
+
+    assert result is not None
+    assert result.source == "numpy"
+    assert result.attrs["provider"] == "deezer"
+    pipeline._itunes.find_match.assert_not_awaited()

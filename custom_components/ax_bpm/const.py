@@ -124,3 +124,38 @@ DEEZER_API = "https://api.deezer.com"
 # produced weeks of silent "unknown" states. Reset on the first
 # successful search.
 DEEZER_EMPTY_WARN_THRESHOLD = 5
+
+# iTunes Search API (anonymous, no key required). Fallback preview/genre
+# provider when Deezer yields no match or no preview URL. Apple exposes
+# no tempo in its public APIs — this provider never supplies a BPM.
+ITUNES_API = "https://itunes.apple.com/search"
+
+# Conservative Apple → Deezer genre alias map (lowercased keys). The
+# octave-disambiguation whitelists (FAST_GENRES / SLOW_GENRES) are keyed
+# on Deezer album-genre strings; Apple's vocabulary differs. Only
+# unambiguous aliases are mapped — unmapped genres pass through and
+# simply don't gate (safe degradation, never a wrong correction).
+ITUNES_GENRE_ALIASES = {
+    "dance": "dance",
+    "electronic": "electro",
+    "electronica": "electro",
+    "electronic (dance)": "electro",
+    "hip-hop/rap": "hip-hop",
+    "hip-hop": "hip-hop",
+    "rap": "hip-hop",
+    "jungle/drum'n'bass": "drum & bass",
+    "drum & bass": "drum & bass",
+    "drum and bass": "drum and bass",
+    "dnb": "dnb",
+    "hardcore": "hardcore",
+    "gabber": "gabber",
+    "breakcore": "breakcore",
+    "speedcore": "speedcore",
+    "ambient": "ambient",
+    "downtempo": "downtempo",
+    "chillout": "chillout",
+    "acoustic": "acoustic",
+    "new age": "new age",
+    "lullabies": "lullaby",
+    "lullaby": "lullaby",
+}
