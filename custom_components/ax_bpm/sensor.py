@@ -94,12 +94,13 @@ class AxBpmSensor(SensorEntity):
         # Service hooks (services.py): immediate re-resolve after a
         # halve/double/clear mutation, and a getter for the currently
         # published BPM (the value a correction applies to).
-        self.hass.data.setdefault(DOMAIN, {}).setdefault(
-            self._entry.entry_id, {}
-        )["refresh_sensor"] = self._refresh_now
-        self.hass.data[self._entry.entry_id]["get_sensor_bpm"] = (
-            self._get_published_bpm
-        )
+        # Both hooks live in the SAME hass.data[DOMAIN][entry_id] dict
+        # that async_setup_entry created — indexing hass.data directly
+        # with the entry_id raised a KeyError inside this hook, which
+        # aborted the entity add and left the sensor unavailable.
+        entry_data = self.hass.data[DOMAIN][self._entry.entry_id]
+        entry_data["refresh_sensor"] = self._refresh_now
+        entry_data["get_sensor_bpm"] = self._get_published_bpm
 
     @callback
     def _refresh_now(self) -> None:

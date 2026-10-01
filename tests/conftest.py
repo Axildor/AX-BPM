@@ -82,5 +82,50 @@ def _stub_homeassistant() -> None:
             return cls
     storage.Store = Store
 
+    # --- Stubs for sensor.py / button.py (entity regression tests) ----------
+    const = _ensure_module("homeassistant.const")
+    const.STATE_OFF = "off"
+    const.STATE_PLAYING = "playing"
+
+    components = _ensure_module("homeassistant.components")
+    components.__path__ = []  # mark as package
+
+    sensor_mod = _ensure_module("homeassistant.components.sensor")
+    class _EntityBase:  # minimal base; tests never touch HA internals
+        def async_on_remove(self, func):
+            # Real HA stores the unsub and calls it on removal; tests only
+            # need the registration to succeed.
+            return func
+    sensor_mod.SensorEntity = _EntityBase
+    sensor_mod.SensorStateClass = type(
+        "SensorStateClass", (), {"MEASUREMENT": "measurement"}
+    )
+
+    button_mod = _ensure_module("homeassistant.components.button")
+    button_mod.ButtonEntity = _EntityBase
+
+    device_registry = _ensure_module("homeassistant.helpers.device_registry")
+    class _DeviceEntryType:
+        SERVICE = "service"
+    device_registry.DeviceEntryType = _DeviceEntryType
+    class _DeviceInfo:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+    device_registry.DeviceInfo = _DeviceInfo
+
+    entity_platform = _ensure_module("homeassistant.helpers.entity_platform")
+    entity_platform.AddEntitiesCallback = object  # annotation-only usage
+
+    event = _ensure_module("homeassistant.helpers.event")
+    def _track_state_change_event(hass, entities, action):
+        # Record-free stub: returns an unsubscribe callable.
+        return lambda: None
+    event.async_track_state_change_event = _track_state_change_event
+    def _call_later(hass, delay, action):
+        # Fire-and-forget stub: returns a cancel callable (never fired —
+        # the debounce path is not under test here).
+        return lambda: None
+    event.async_call_later = _call_later
+
 
 _stub_homeassistant()

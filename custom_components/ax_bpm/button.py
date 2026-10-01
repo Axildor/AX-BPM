@@ -58,6 +58,10 @@ class AxBpmButton(ButtonEntity):
     """One AX BPM action button (service wrapper)."""
 
     _attr_should_poll = False
+    # Required for the translation-key name to resolve: HA core only
+    # consults entity.<platform>.<key>.name translations when the entity
+    # opts into entity-name mode (entity.py _name_internal gate).
+    _attr_has_entity_name = True
 
     def __init__(self, entry, action: str) -> None:
         self._entry = entry
