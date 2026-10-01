@@ -1,9 +1,10 @@
 """Supervisor discovery announcement (HA-native add-on discovery).
 
 When running as a Home Assistant add-on, the service announces itself to
-the Supervisor so the AX BPM integration learns the REAL resolvable
-hostname + port instead of guessing. The Supervisor routes the discovery
-to the integration's `async_step_hassio` config-flow step.
+the Supervisor (POST /discovery) so the AX BPM integration learns the
+REAL resolvable hostname + port instead of guessing. The Supervisor
+routes the discovery to the integration's `async_step_hassio` config-flow
+step.
 
 Why this exists: HA derives an add-on's DNS name as `{REPO}_{SLUG}` with
 underscores replaced by hyphens, where `{REPO}` is a hashed identifier
@@ -75,7 +76,7 @@ def _announce_sync(token: str) -> None:
         return
     _request(
         "POST",
-        "/services/discovery",
+        "/discovery",
         token,
         {"service": DISCOVERY_SERVICE, "config": {"host": hostname, "port": cfg.PORT}},
     )

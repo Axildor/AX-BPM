@@ -171,8 +171,13 @@ class AxBpmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         (service "ax_bpm"). `discovery_info` is a HassioServiceInfo whose
         `.config` carries the add-on's real hostname + port.
 
-        We record the discovered URL and show the normal setup form with
-        `step_id="user"` — HA routes the user's submission to
+        Existing entry: patch `discovered_analyzer_url` into its data and
+        abort with "already_configured" — the standard HA pattern so a
+        fixed discovery announcement never nags the user with a duplicate
+        form. The running pipeline picks the URL up on the next reload.
+
+        New setup: record the discovered URL and show the normal setup
+        form with `step_id="user"` — HA routes the user's submission to
         `async_step_user`, which injects the recorded URL into the entry.
         """
         config = getattr(discovery_info, "config", None) or {}
@@ -187,6 +192,25 @@ class AxBpmConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         self._discovered_url = f"http://{host}:{port}"
         _LOGGER.info("AX BPM: analyzer discovered at %s", self._discovered_url)
+
+        for entry in self._async_current_entries():
+            if CONF_DISCOVERED_ANALYZER_URL not in entry.data:
+                self.hass.config_entries.async_update_entry(
+                    entry,
+                    data={
+                        **entry.data,
+                        CONF_DISCOVERED_ANALYZER_URL: self._discovered_url,
+                    },
+                )
+                _LOGGER.info(
+                    "AX BPM: patched discovered analyzer URL %s into "
+                    "existing entry %s",
+                    self._discovered_url,
+                    entry.entry_id,
+                )
+            # Already-configured entries are never re-offered a setup form —
+            # the URL patch above is the whole point of this path.
+            return self.async_abort(reason="already_configured")
 
         return self.async_show_form(
             step_id="user",

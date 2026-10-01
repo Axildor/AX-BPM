@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 import aiohttp
@@ -35,6 +36,12 @@ _LOGGER = logging.getLogger(__name__)
 
 # Health probe timeout — shorter than analysis; used by config flow + setup.
 HEALTH_TIMEOUT = 3.0
+
+# Re-probe cooldown: when the analyzer was never detected (or the resolved
+# URL stopped answering), async_analyze may retry detection at most once per
+# this window. Covers startup ordering (add-on boots after HA core) without
+# hammering the network on every track change.
+REPROBE_COOLDOWN = 300.0
 
 
 def _read_file(path: str) -> bytes:
@@ -64,21 +71,35 @@ class AnalyzerClient:
         self._api_token = (api_token or "").strip() or None
         self._resolved_url: str | None = None
         self._probed = False
+        self._last_failed_detect: float | None = None
 
     @property
     def base_url(self) -> str | None:
         """The resolved analyzer base URL, or None when not detected."""
         return self._resolved_url
 
-    async def async_detect(self) -> str | None:
-        """Resolve the analyzer URL once.
+    async def async_detect(self, force: bool = False) -> str | None:
+        """Resolve the analyzer URL (cached; cooldown-bounded re-probe).
 
         Auto-detect order: manual override → discovered URL (Supervisor
         discovery) → homeassistant.local fallback. Returns the working
         base URL or None.
+
+        force=True bypasses the cooldown (used by async_analyze when the
+        resolved URL stopped answering). Without force, a failed detection
+        is retried at most once per REPROBE_COOLDOWN seconds so startup
+        ordering (add-on boots after HA core) self-heals without
+        hammering the network on every track change.
         """
-        if self._probed:
-            return self._resolved_url
+        if self._probed and not force:
+            if self._resolved_url is not None:
+                return self._resolved_url
+            if (
+                self._last_failed_detect is not None
+                and time.monotonic() - self._last_failed_detect
+                < REPROBE_COOLDOWN
+            ):
+                return None
         self._probed = True
 
         candidates: list[str] = []
@@ -91,9 +112,11 @@ class AnalyzerClient:
         for url in candidates:
             if await self._async_health(url):
                 self._resolved_url = url
+                self._last_failed_detect = None
                 _LOGGER.info("AX BPM: analyzer detected at %s", url)
                 return url
         self._resolved_url = None
+        self._last_failed_detect = time.monotonic()
         if self._manual_url:
             _LOGGER.info(
                 "AX BPM: analyzer not reachable at %s — mood attributes "
@@ -144,11 +167,18 @@ class AnalyzerClient:
 
         Returns the payload dict (bpm + bpm_confidence + mood_scores +
         tags) on success, None on any failure (timeout, HTTP error, 5xx,
-        unreachable). Single attempt, no retry.
+        unreachable). Single attempt per URL; on a transport failure the
+        client force-re-detects once (cooldown-free) so a moved/restarted
+        analyzer is picked up on the next call.
         """
         base = self._resolved_url or self._manual_url or self._discovered_url
         if not base:
-            return None
+            # Never detected (or cooldown-blocked): allow one cooldown-bounded
+            # re-detect so startup ordering self-heals without user action.
+            await self.async_detect()
+            base = self._resolved_url
+            if not base:
+                return None
         form = aiohttp.FormData()
         form.add_field(
             "file", preview, filename="preview.mp3", content_type="audio/mpeg"
@@ -180,4 +210,7 @@ class AnalyzerClient:
             return await asyncio.wait_for(_post(), timeout=ANALYZER_TIMEOUT)
         except (TimeoutError, aiohttp.ClientError, OSError, ValueError) as err:
             _LOGGER.debug("AX BPM analyzer /analyze failed: %s", err)
+            # The resolved URL stopped answering — force one re-detect so
+            # the NEXT call can target a recovered/moved analyzer.
+            await self.async_detect(force=True)
             return None

@@ -183,6 +183,84 @@ async def test_detect_discovered_falls_back_to_localhost():
 
 
 # ---------------------------------------------------------------------------
+# AnalyzerClient — cooldown-bounded re-probe (startup-ordering self-heal)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_failed_detect_cooldown_blocks_immediate_reprobe():
+    """A failed detection is NOT re-probed inside the cooldown window."""
+    client, session = _make_client(None)
+    session.get = MagicMock(return_value=_Ctx(_resp(503)))
+    assert await client.async_detect() is None
+    first_count = session.get.call_count
+    # Immediate second call: cooldown active → no new probes.
+    assert await client.async_detect() is None
+    assert session.get.call_count == first_count
+
+
+@pytest.mark.asyncio
+async def test_failed_detect_reprobes_after_cooldown(monkeypatch):
+    """After REPROBE_COOLDOWN the client retries detection and can recover."""
+    from ax_bpm import analyzer_client as mod
+
+    client, session = _make_client(None)
+    session.get = MagicMock(return_value=_Ctx(_resp(503)))
+    assert await client.async_detect() is None
+
+    # Simulate the cooldown having elapsed (offset from the REAL monotonic
+    # clock — a fixed constant can be below the current uptime).
+    now = mod.time.monotonic()
+    monkeypatch.setattr(
+        mod.time, "monotonic", lambda: now + mod.REPROBE_COOLDOWN + 1.0
+    )
+    session.get = MagicMock(return_value=_Ctx(_resp(200, {"status": "ok"})))
+    assert await client.async_detect() == mod.ANALYZER_URLS[0]
+    assert client.base_url == mod.ANALYZER_URLS[0]
+
+
+@pytest.mark.asyncio
+async def test_async_analyze_reprobes_when_never_detected(monkeypatch):
+    """async_analyze with no resolved URL triggers a cooldown-bounded re-detect."""
+    from ax_bpm import analyzer_client as mod
+
+    client, session = _make_client(None)
+    # Health probe fails on the first detect, succeeds on the re-probe.
+    responses = [_Ctx(_resp(503)), _Ctx(_resp(200, {"status": "ok"}))]
+    session.get = MagicMock(side_effect=lambda *a, **k: responses.pop(0))
+    # /analyze answers once the URL resolves.
+    payload = {"bpm": 120.0}
+    session.post = MagicMock(return_value=_Ctx(_resp(200, payload)))
+
+    # First analyze: detect fails → None (no POST).
+    assert await client.async_analyze(b"mp3") is None
+    assert session.post.call_count == 0
+
+    # Cooldown elapsed → the next analyze re-detects and POSTs (offset from
+    # the REAL monotonic clock — a fixed constant can be below the uptime).
+    now = mod.time.monotonic()
+    monkeypatch.setattr(
+        mod.time, "monotonic", lambda: now + mod.REPROBE_COOLDOWN + 1.0
+    )
+    assert await client.async_analyze(b"mp3") == payload
+    assert session.post.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_async_analyze_force_reprobe_when_resolved_url_dies():
+    """A resolved URL that stops answering triggers a forced re-detect."""
+    client, session = _make_client(None)
+    session.get = MagicMock(return_value=_Ctx(_resp(200, {"status": "ok"})))
+    assert await client.async_detect() is not None
+
+    # Analyzer goes down: /analyze POST fails with a ClientError.
+    session.post = MagicMock(side_effect=ConnectionError("refused"))
+    assert await client.async_analyze(b"mp3") is None
+    # The forced re-detect probed health again (detect ran after the failure).
+    assert session.get.call_count >= 2
+
+
+# ---------------------------------------------------------------------------
 # Cache v1 → v2 migration
 # ---------------------------------------------------------------------------
 
@@ -315,3 +393,134 @@ def test_migrate_legacy_toggles():
     )
     # defaults when nothing stored: genre on, mood off → Genre only
     assert _migrate_legacy_toggles({}) == OCTAVE_GENRE_ONLY
+
+
+# ---------------------------------------------------------------------------
+# Config flow — async_step_hassio discovery handling
+# ---------------------------------------------------------------------------
+
+
+class _FakeEntry:
+    """Minimal ConfigEntry stand-in for the hassio-step tests."""
+
+    def __init__(self, data):
+        self.entry_id = "test-entry"
+        self.data = dict(data)
+        self.title = "AX BPM"
+
+
+class _FakeHass:
+    def __init__(self, entries):
+        self._entries = entries
+        self.config_entries = MagicMock()
+        # Mirror the real API: async_update_entry(entry, data=...) mutates
+        # the entry in place.
+        self.config_entries.async_update_entry = MagicMock(
+            side_effect=self._update_entry
+        )
+
+    @staticmethod
+    def _update_entry(entry, data=None, **kwargs):
+        if data is not None:
+            entry.data = dict(data)
+
+    def entries(self):
+        return self._entries
+
+
+class _HassioInfo:
+    def __init__(self, config):
+        self.config = config
+
+
+def _make_flow(entries):
+    from ax_bpm.config_flow import AxBpmConfigFlow
+
+    flow = AxBpmConfigFlow.__new__(AxBpmConfigFlow)
+    flow.hass = _FakeHass(entries)
+    flow._discovered_url = None
+    # Base-class methods (stubbed ConfigFlow in conftest) — bind fakes that
+    # mirror the real return shapes.
+    flow._async_current_entries = lambda: flow.hass.entries()
+    flow.async_abort = lambda *, reason: {"type": "abort", "reason": reason}
+    flow.async_show_form = lambda *, step_id, **kwargs: {
+        "type": "form",
+        "step_id": step_id,
+    }
+    # The user step probes the analyzer — stub it out (network-free).
+    flow._probe_analyzer = AsyncMock(return_value=False)
+    return flow
+
+
+@pytest.fixture
+def _stub_schema(monkeypatch):
+    """Replace _build_schema — the conftest selector stubs return tuples
+    that real voluptuous cannot compile (schema building is not under test
+    here; the hassio routing logic is)."""
+    from ax_bpm import config_flow as cf
+
+    monkeypatch.setattr(
+        cf, "_build_schema", lambda defaults, detected: MagicMock()
+    )
+
+
+@pytest.mark.asyncio
+async def test_hassio_existing_entry_patched_and_aborted():
+    """Discovery on an ALREADY-CONFIGURED entry patches the URL + aborts."""
+    entry = _FakeEntry({"media_player": "media_player.x"})
+    flow = _make_flow([entry])
+
+    result = await flow.async_step_hassio(
+        _HassioInfo({"host": "abc123-ax-bpm-analyzer", "port": 8099})
+    )
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "already_configured"
+    assert entry.data["discovered_analyzer_url"] == (
+        "http://abc123-ax-bpm-analyzer:8099"
+    )
+    flow.hass.config_entries.async_update_entry.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_hassio_existing_entry_with_url_not_repainted(_stub_schema):
+    """An entry that already carries a discovered URL is left untouched."""
+    entry = _FakeEntry(
+        {"media_player": "media_player.x", "discovered_analyzer_url": "http://old:8099"}
+    )
+    flow = _make_flow([entry])
+
+    result = await flow.async_step_hassio(
+        _HassioInfo({"host": "new-host", "port": 8099})
+    )
+
+    assert result["type"] == "abort"
+    assert result["reason"] == "already_configured"
+    assert entry.data["discovered_analyzer_url"] == "http://old:8099"
+    flow.hass.config_entries.async_update_entry.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hassio_no_existing_entry_shows_user_form(_stub_schema):
+    """No existing entry → the normal user setup form with the URL recorded."""
+    flow = _make_flow([])
+
+    result = await flow.async_step_hassio(
+        _HassioInfo({"host": "abc123-ax-bpm-analyzer", "port": 8099})
+    )
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "user"
+    assert flow._discovered_url == "http://abc123-ax-bpm-analyzer:8099"
+
+
+@pytest.mark.asyncio
+async def test_hassio_missing_host_port_falls_back_to_user_step(_stub_schema):
+    """A discovery announcement without host/port → manual setup form."""
+    flow = _make_flow([])
+
+    result = await flow.async_step_hassio(_HassioInfo({}))
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "user"
+    assert flow._discovered_url is None
