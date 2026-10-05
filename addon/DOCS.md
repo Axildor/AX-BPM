@@ -65,9 +65,11 @@ set a token in the add-on **and** the integration options — they must match.
 ## How discovery works
 
 At startup the add-on calls the Supervisor discovery API
-(`POST /services/discovery`, service `ax_bpm`), so the integration learns the
-real resolvable hostname + port instead of guessing. The integration's
-detection order is:
+(`POST /discovery`, service `ax_bpm`), so the integration learns the
+real resolvable hostname + port instead of guessing. The add-on declares
+this service in its `config.yaml` (`discovery: [ax_bpm]`) — the
+Supervisor rejects discovery announcements for services the add-on does
+not declare (HTTP 403). The integration's detection order is:
 
 1. Manual *Analyzer URL* override (if set)
 2. Supervisor-discovered URL (HA-native discovery)
@@ -89,7 +91,19 @@ detection order is:
   add-on's `api_token` to disable auth.
 - **Analyzer not detected** — verify the add-on is started, then check the
   integration's status line in its options dialog; it shows the resolved
-  analyzer URL.
+  analyzer URL. The integration also exposes a dedicated
+  **Analyzer status** sensor (`sensor.ax_bpm_analyzer_status`) with
+  states `connected` / `disconnected` / `disabled` plus the resolved URL
+  and per-model health as attributes — it polls `/health` every 60 s and
+  updates immediately after every analysis attempt.
+- **Add-on log shows `discovery announcement failed (HTTP Error 403)`** —
+  the installed add-on predates 1.0.5, which added the required
+  `discovery: [ax_bpm]` declaration to its config. Update the add-on
+  (and the integration to 3.1.2) and restart it; the log should then
+  read `announced discovery to Supervisor (<hostname>:8099)`.
+  Meanwhile, set the *Analyzer URL* option to
+  `http://<your-ha-hostname>:8099` (e.g. `http://haos.local:8099`) as a
+  workaround.
 
 ## License
 

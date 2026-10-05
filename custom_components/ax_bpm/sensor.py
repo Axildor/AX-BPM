@@ -28,6 +28,7 @@ from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 
+from .analyzer_status import AxBpmAnalyzerStatusSensor
 from .const import (
     CONF_MEDIA_PLAYER,
     DOMAIN,
@@ -51,8 +52,14 @@ async def async_setup_entry(
         _LOGGER.error("No media player configured for AX BPM")
         return
 
-    pipeline = hass.data[DOMAIN][entry.entry_id]["pipeline"]
-    async_add_entities([AxBpmSensor(entry, media_player_id, pipeline)])
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    pipeline = entry_data["pipeline"]
+    async_add_entities(
+        [
+            AxBpmSensor(entry, media_player_id, pipeline),
+            AxBpmAnalyzerStatusSensor(entry, entry_data["status_coordinator"]),
+        ]
+    )
 
 
 class AxBpmSensor(SensorEntity):

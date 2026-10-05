@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 
 from .analyzer import analyzer_available
+from .analyzer_status import AnalyzerStatusCoordinator
 from .const import CONF_MEDIA_PLAYER, DOMAIN, PLATFORMS
 from .migration import async_migrate_entry  # noqa: F401 — HA entry point
 from .overrides import BpmOverrideStore
@@ -61,11 +62,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await pipeline.async_setup()
     _update_analyzer_issue(hass, entry)
 
+    # Analyzer connectivity status: 60 s /health poll + push updates on
+    # every /analyze outcome (see analyzer_status.py). The first poll
+    # runs as a coordinator refresh — never blocks setup.
+    status_coordinator = AnalyzerStatusCoordinator(hass, pipeline)
+
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "session": session,
         "cache": cache,
         "overrides": overrides,
         "pipeline": pipeline,
+        "status_coordinator": status_coordinator,
         "media_player": entry.data.get(CONF_MEDIA_PLAYER),
     }
 

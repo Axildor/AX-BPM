@@ -116,6 +116,26 @@ def _stub_homeassistant() -> None:
     entity_platform = _ensure_module("homeassistant.helpers.entity_platform")
     entity_platform.AddEntitiesCallback = object  # annotation-only usage
 
+    update_coordinator = _ensure_module("homeassistant.helpers.update_coordinator")
+    class _DataUpdateCoordinator:  # minimal base; tests subclass/mock it
+        def __init__(self, hass, logger, name=None, update_interval=None):
+            self.hass = hass
+            self.logger = logger
+            self.name = name
+            self.update_interval = update_interval
+            self.data = None
+        def async_set_updated_data(self, data):
+            self.data = data
+    update_coordinator.DataUpdateCoordinator = _DataUpdateCoordinator
+    class _CoordinatorEntity:  # minimal mixin; tests set attributes directly
+        def __init__(self, coordinator, **kwargs):
+            super().__init__()
+            self.coordinator = coordinator
+        @property
+        def available(self):
+            return True
+    update_coordinator.CoordinatorEntity = _CoordinatorEntity
+
     event = _ensure_module("homeassistant.helpers.event")
     def _track_state_change_event(hass, entities, action):
         # Record-free stub: returns an unsubscribe callable.

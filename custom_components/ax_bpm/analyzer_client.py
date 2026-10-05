@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 import aiohttp
@@ -72,6 +73,14 @@ class AnalyzerClient:
         self._resolved_url: str | None = None
         self._probed = False
         self._last_failed_detect: float | None = None
+        # Push hook for the analyzer-status sensor: fired after every
+        # /analyze outcome so connectivity reflects real usage, not just
+        # the 60 s poll. Set by analyzer_status.AnalyzerStatusCoordinator.
+        self._analyze_listener: Callable[[bool], None] | None = None
+
+    def set_analyze_listener(self, listener: Callable[[bool], None]) -> None:
+        """Register the push callback (success/failure of each /analyze)."""
+        self._analyze_listener = listener
 
     @property
     def base_url(self) -> str | None:
@@ -207,10 +216,24 @@ class AnalyzerClient:
         try:
             # Hard outer timeout: guarantees the single attempt can never
             # hang past ANALYZER_TIMEOUT regardless of transport behavior.
-            return await asyncio.wait_for(_post(), timeout=ANALYZER_TIMEOUT)
+            result = await asyncio.wait_for(_post(), timeout=ANALYZER_TIMEOUT)
         except (TimeoutError, aiohttp.ClientError, OSError, ValueError) as err:
             _LOGGER.debug("AX BPM analyzer /analyze failed: %s", err)
             # The resolved URL stopped answering — force one re-detect so
             # the NEXT call can target a recovered/moved analyzer.
             await self.async_detect(force=True)
+            self._notify_analyze_result(False)
             return None
+        # _post() returns None on any non-200 status (HTTP 500, 503 busy,
+        # 413 too large, …) — that is also a failure for the status push.
+        self._notify_analyze_result(result is not None)
+        return result
+
+    def _notify_analyze_result(self, success: bool) -> None:
+        """Fire the status-sensor push hook (never raises into the caller)."""
+        if self._analyze_listener is None:
+            return
+        try:
+            self._analyze_listener(success)
+        except Exception:  # noqa: BLE001 — status push must never break analysis
+            _LOGGER.debug("AX BPM analyzer status push failed", exc_info=True)

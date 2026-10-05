@@ -1,12 +1,16 @@
 # AX BPM Analyzer add-on configuration.
 # The add-on announces itself to Home Assistant via the Supervisor
-# discovery API (POST /services/discovery, service "ax_bpm") at startup,
-# so the integration learns the real resolvable hostname + port instead
-# of guessing. Port 8099 stays host-mapped for external-analyzer mode
-# (non-Supervisor installs reach it via homeassistant.local:8099).
+# discovery API (POST /discovery, service "ax_bpm") at startup, so the
+# integration learns the real resolvable hostname + port instead of
+# guessing. The Supervisor REQUIRES the service to be declared here —
+# without `discovery: [ax_bpm]` the announcement is rejected with 403.
+# Port 8099 stays host-mapped for external-analyzer mode (non-Supervisor
+# installs reach it via homeassistant.local:8099).
 name: AX BPM Analyzer
-version: "1.0.4"
+version: "1.0.5"
 slug: ax_bpm_analyzer
+discovery:
+  - ax_bpm
 description: Tempo and mood analyzer for the AX BPM integration (aubio + ONNX)
 arch:
   - amd64

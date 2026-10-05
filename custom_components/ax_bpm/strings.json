@@ -91,6 +91,27 @@
       "btn_clear_overrides": {
         "name": "Clear BPM overrides"
       }
+    },
+    "sensor": {
+      "analyzer_status": {
+        "name": "Analyzer status",
+        "state": {
+          "connected": "Connected",
+          "disconnected": "Disconnected",
+          "disabled": "Disabled"
+        },
+        "state_attributes": {
+          "analyzer_url": {
+            "name": "Analyzer URL"
+          },
+          "health_status": {
+            "name": "Health status"
+          },
+          "tempo_available": {
+            "name": "Tempo available"
+          }
+        }
+      }
     }
   }
 }

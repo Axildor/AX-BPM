@@ -93,6 +93,14 @@ DECODE_SAMPLE_RATE = 22050
 # ---------------------------------------------------------------------------
 PLATFORMS = ["sensor", "button"]
 UNIT_BPM = "BPM"
+
+# Analyzer connectivity status sensor (analyzer_status.py).
+# States: connected / disconnected / disabled. The coordinator polls
+# /health on this interval; /analyze outcomes push updates immediately.
+ANALYZER_STATUS_POLL_SECONDS = 60
+STATUS_CONNECTED = "connected"
+STATUS_DISCONNECTED = "disconnected"
+STATUS_DISABLED = "disabled"
 SOURCE_DEEZER = "deezer_metadata"
 SOURCE_ANALYZER = "analyzer"
 SOURCE_NUMPY = "numpy"

@@ -189,6 +189,23 @@ relaxed/acoustic averages) with arousal as tie-breaker.
 - Mood attributes never delay the BPM publish: on the Deezer-metadata
   path they arrive as a second state write after the BPM is published.
 
+## Analyzer status sensor
+
+`sensor.ax_bpm_analyzer_status` — tells you at a glance whether the AX
+BPM Analyzer add-on is reachable:
+
+- **Connected** — the analyzer answered its health check (mood analysis
+  is available).
+- **Disconnected** — the analyzer is unreachable; mood attributes are
+  disabled and local tempo degrades to the NumPy floor.
+- **Disabled** — the octave-disambiguation mode is not *Genre + mood*,
+  so the analyzer is never consulted.
+
+Attributes show the resolved analyzer URL, per-model health, tempo
+availability, and the time of the last check / last analysis attempt.
+The status refreshes every 60 seconds and updates immediately after
+every analysis attempt.
+
 ---
 
 ## ☕ Support the Project
