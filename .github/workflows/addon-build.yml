@@ -53,7 +53,7 @@ jobs:
       - name: Build ${{ matrix.arch }}
         # 2026.02.1 = latest release whose ghcr.io builder image exists
         # (2026.06.0 action resolves but its builder image is "manifest unknown").
-        uses: home-assistant/builder@2026.02.1
+        uses: home-assistant/builder@2026.09.0
         with:
           # Modern builder syntax: explicit platform flag + --target (the
           # add-on directory name inside the repo, not a path). No --test:
