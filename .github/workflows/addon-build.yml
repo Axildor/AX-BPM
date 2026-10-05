@@ -44,7 +44,7 @@ jobs:
       # container, so the push target (ghcr.io, from the image: key in
       # addon/config.yaml) must be logged in on the runner first.
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
