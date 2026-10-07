@@ -53,7 +53,7 @@ jobs:
 
       - name: Cache model weights
         id: model-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .axbpm-models
           key: axbpm-models-${{ hashFiles('analyzer/ax_bpm_analyzer/config.py') }}
@@ -136,14 +136,14 @@ jobs:
 
       - name: Cache model weights
         id: model-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .axbpm-models
           key: axbpm-models-${{ hashFiles('analyzer/ax_bpm_analyzer/config.py') }}
 
       - name: Cache contrastive previews
         id: preview-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .axbpm-previews
           # Keyed on the track-ID set: a track change re-fetches; the
