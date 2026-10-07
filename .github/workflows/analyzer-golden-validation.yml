@@ -45,7 +45,7 @@ jobs:
       # user). The golden tests build their own ModelManager explicitly.
       AXBPM_SKIP_BOOTSTRAP: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
@@ -128,7 +128,7 @@ jobs:
       AXBPM_CONTRASTIVE_CACHE_DIR: ${{ github.workspace }}/.axbpm-previews
       AXBPM_CONTRASTIVE_OUT: ${{ github.workspace }}/gate-numbers
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:

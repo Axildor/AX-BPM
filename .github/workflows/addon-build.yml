@@ -23,7 +23,7 @@ jobs:
       matrix:
         arch: [amd64, aarch64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The hassio builder uses the --target dir as the docker build
       # context, but addon/Dockerfile COPYs repo-root-relative paths
@@ -76,7 +76,7 @@ jobs:
   probe-runtime-image:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Assemble self-contained build context
         run: |

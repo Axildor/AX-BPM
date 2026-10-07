@@ -38,7 +38,7 @@ jobs:
     name: HACS validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: HACS action
         # category: integration — this repo's custom_components/ax_bpm is
@@ -61,7 +61,7 @@ jobs:
     name: hassfest
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Run hassfest validation
         uses: home-assistant/actions/hassfest@master
@@ -70,7 +70,7 @@ jobs:
     name: ruff lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v5
         with:
