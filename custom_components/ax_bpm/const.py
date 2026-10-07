@@ -131,6 +131,14 @@ EXPECTED_MOOD_SCORES = frozenset({
     "aggressive", "party", "relaxed", "electronic", "acoustic",
 })
 
+# Cache payload version (mood-degeneracy fix): entries written before the
+# decode scale fix carry degenerate mood values (all heads saturated by
+# unscaled int16 PCM). Bumping this version invalidates them — a cached
+# entry whose version differs from CACHE_PAYLOAD_VERSION is ignored and
+# re-analyzed. Bump again whenever the analyzer's mood derivation changes
+# materially.
+CACHE_PAYLOAD_VERSION = 2
+
 # Deezer endpoints (anonymous, no key required for public read endpoints).
 DEEZER_API = "https://api.deezer.com"
 

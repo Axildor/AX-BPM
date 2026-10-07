@@ -207,8 +207,13 @@ class AxBpmSensor(SensorEntity):
 
         if result is None:
             # Failure → unknown, NEVER 0. Retries on the next real track
-            # change (not on every attribute update).
+            # change (not on every attribute update). Defect 4 fix: the
+            # PREVIOUS track's per-track attributes (mood_scores,
+            # mood_label, isrc, bpm_raw, …) must NOT survive on an
+            # unknown state — clear them so the entity never presents
+            # stale valid-looking metadata alongside unknown.
             self._attr_native_value = None
+            self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
             return
 

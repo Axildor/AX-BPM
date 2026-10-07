@@ -26,9 +26,10 @@ select = [
 # Tests: bare asserts are the point (B011), and the golden-gate test
 # imports AFTER require_onnx() by design (E402 — the import must not
 # run when onnxruntime is missing).
-"tests/*" = ["B011"]
+"tests/*" = ["B011", "E402"]
 "analyzer/tests/*" = ["B011"]
 "analyzer/tests/test_inference_goldens.py" = ["E402"]
+"analyzer/tests/test_contrastive_gate.py" = ["E402"]
 # One-shot golden-harness scripts (freeze/check/compose): reference
 # tooling, not shipped code — long URL/constant lines are fine.
 "analyzer/tests/goldens/*" = ["E501", "B007"]

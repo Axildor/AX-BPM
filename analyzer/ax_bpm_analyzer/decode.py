@@ -1,9 +1,17 @@
-"""Audio decode chain: miniaudio → soundfile → ffmpeg binary.
+"""Audio decode chain: miniaudio → soundfile.
 
-Mirrors the integration's decode.py chain, targeting 16 kHz mono float32
-(the analyzer front end's input spec). Each decoder is probed lazily and
-cached; a decoder that fails to import or errors falls through to the
-next. The ffmpeg path uses the binary present in most container images.
+Per-runtime decoder asymmetry (owner decision, 2026-10-07): the
+integration's decode copy (custom_components/ax_bpm/decode.py) KEEPS an
+ffmpeg-binary tier — HA core ships the binary and the integration
+manifest installs no wheels, so ffmpeg is the NumPy BPM floor's only
+decoder there. The analyzer image installs ONLY requirements.txt
+(miniaudio + soundfile wheels) and never runs apt, so an ffmpeg tier
+here could only silently 422 — it is removed. The scale handling
+(sample_format source-of-truth branch + belt-and-braces guard) is
+decoder-agnostic and stays structurally identical in both copies.
+
+Each decoder is probed lazily; a decoder that fails to import or errors
+falls through to the next.
 
 Since the aubio tempo tier moved in-process (tempo.py), decode() is
 parameterized by target rate: the API layer decodes ONCE at 44.1 kHz
@@ -21,17 +29,12 @@ test harness).
 from __future__ import annotations
 
 import logging
-import shutil
-import tempfile
-from pathlib import Path
 
 import numpy as np
 
 from . import config as cfg
 
 _LOGGER = logging.getLogger(__name__)
-
-_FFMPEG_TIMEOUT = 30.0
 
 
 def _resample_mono(mono: np.ndarray, sr: int, target: int) -> np.ndarray:
@@ -53,15 +56,32 @@ def _decode_with_miniaudio(
     try:
         import miniaudio
     except ImportError:
-        return None
+        return None  # absent decoder — expected, debug-level
     try:
         decoded = miniaudio.decode(data, nchannels=1, sample_rate=target_rate)
         samples = np.asarray(decoded.samples, dtype=np.float32)
-        if samples.dtype == np.int16:
+        # Root fix (mood-degeneracy): the decoder's sample_format is the
+        # source of truth. The old `samples.dtype == np.int16` check was
+        # dead code — np.asarray(..., dtype=np.float32) coerces at
+        # construction, so the check could never fire — and dr_mp3's
+        # SIGNED16 output leaked unscaled (abs-max ≈ 32768) into the
+        # mel front end, shifting logmel +9–10 and collapsing mood heads.
+        if getattr(decoded, "sample_format", None) == (
+            miniaudio.SampleFormat.SIGNED16
+        ):
+            samples = samples / 32768.0
+        # Belt-and-braces only: any decoder that still leaks an int16-range
+        # buffer is rescaled here (never the primary mechanism).
+        if samples.size and float(np.max(np.abs(samples))) > 1.5:
             samples = samples / 32768.0
         return samples, target_rate
     except Exception as err:  # noqa: BLE001 — any decode failure falls through
-        _LOGGER.debug("miniaudio decode failed: %s", err)
+        # Fall-through hygiene (mood-degeneracy closeout): an AVAILABLE
+        # decoder that raises must warn loudly — the SIGNED_INT16
+        # AttributeError was silently swallowed here, invisibly disabling
+        # miniaudio (ffmpeg won that run). "Graceful degradation" means
+        # fail-to-fallback LOUDLY.
+        _LOGGER.warning("miniaudio decode failed (falling through): %s", err)
         return None
 
 
@@ -74,54 +94,14 @@ def _decode_with_soundfile(
 
         import soundfile as sf
     except ImportError:
-        return None
+        return None  # absent decoder — expected, debug-level
     try:
         samples, sr = sf.read(io.BytesIO(data), dtype="float32", always_2d=True)
         mono = samples.mean(axis=1)
         return _resample_mono(mono, int(sr), target_rate), target_rate
     except Exception as err:  # noqa: BLE001 — any decode failure falls through
-        _LOGGER.debug("soundfile decode failed: %s", err)
+        _LOGGER.warning("soundfile decode failed (falling through): %s", err)
         return None
-
-
-def _decode_with_ffmpeg(
-    data: bytes, target_rate: int
-) -> tuple[np.ndarray, int] | None:
-    """Decode via the ffmpeg binary (present in most container images)."""
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        return None
-    tmp = Path(tempfile.mkstemp(suffix=".audio", prefix="axbpm_")[1])
-    try:
-        tmp.write_bytes(data)
-        import subprocess
-
-        proc = subprocess.run(
-            [
-                ffmpeg,
-                "-v", "quiet",
-                "-i", str(tmp),
-                "-ac", "1",
-                "-ar", str(target_rate),
-                "-f", "f32le",
-                "-",
-            ],
-            capture_output=True,
-            timeout=_FFMPEG_TIMEOUT,
-            check=False,  # returncode inspected below (fall-through decoder)
-        )
-        if proc.returncode != 0 or not proc.stdout:
-            return None
-        samples = np.frombuffer(proc.stdout, dtype=np.float32)
-        return samples, target_rate
-    except Exception as err:  # noqa: BLE001 — any decode failure falls through
-        _LOGGER.debug("ffmpeg decode failed: %s", err)
-        return None
-    finally:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
 
 
 def decode(
@@ -133,14 +113,53 @@ def decode(
     44100 → the aubio tempo tier's preferred rate. Returns None when no
     decoder can handle the input (caller → 422).
     """
+    result = decode_traced(data, sample_rate)
+    return None if result is None else (result[0], result[1])
+
+
+def decode_traced(
+    data: bytes, sample_rate: int | None = None
+) -> tuple[np.ndarray, int, str] | None:
+    """decode() + the winning decoder's name as a third tuple element.
+
+    Debug instrumentation only (AXBPM_ANALYZE_DEBUG): the API layer uses
+    this to report WHICH decoder produced the PCM. The public decode()
+    contract is unchanged.
+    """
     if not data:
         return None
     target = int(sample_rate) if sample_rate else cfg.SAMPLE_RATE
-    for decoder in (_decode_with_miniaudio, _decode_with_soundfile, _decode_with_ffmpeg):
+    for name, decoder in (
+        ("miniaudio", _decode_with_miniaudio),
+        ("soundfile", _decode_with_soundfile),
+    ):
         result = decoder(data, target)
         if result is not None and len(result[0]) > 0:
-            return result
+            return result[0], result[1], name
     return None
+
+
+def pcm_stats(samples: np.ndarray, sr: int, decoder: str) -> dict:
+    """PCM diagnostics for one decoded buffer (debug mode only).
+
+    Reports the Step B decision-table numbers: length, rate, abs-max,
+    RMS, DC offset, first-1000-samples min/max. Channel handling is
+    noted (all three decoders downmix to mono — nchannels=1 / mean(axis=1)
+    / -ac 1 — there is no interleave path).
+    """
+    x = np.asarray(samples, dtype=np.float64)
+    head = x[:1000]
+    return {
+        "decoder": decoder,
+        "length_samples": int(x.size),
+        "sample_rate": int(sr),
+        "channels": "mono (downmixed at decode: nchannels=1 / mean(axis=1) / -ac 1)",
+        "abs_max": round(float(np.max(np.abs(x))) if x.size else 0.0, 6),
+        "rms": round(float(np.sqrt(np.mean(x * x))) if x.size else 0.0, 6),
+        "dc_offset": round(float(np.mean(x)) if x.size else 0.0, 6),
+        "first_1000_min": round(float(head.min()) if head.size else 0.0, 6),
+        "first_1000_max": round(float(head.max()) if head.size else 0.0, 6),
+    }
 
 
 def downsample(

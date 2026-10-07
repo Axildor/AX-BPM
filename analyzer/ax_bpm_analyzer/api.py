@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -24,7 +25,7 @@ from fastapi.responses import JSONResponse
 
 from . import config as cfg
 from . import tempo
-from .decode import decode, downsample
+from .decode import decode, decode_traced, downsample, pcm_stats
 from .discovery import async_announce
 from .inference import InferenceEngine
 from .models import ModelManager
@@ -156,6 +157,22 @@ def _analyze_sync(data: bytes) -> dict | None:
     rate — parity with the integration's former in-core aubio path),
     run tempo on it, downsample to 16 kHz for the ONNX front end.
     """
+    debug_pcm: dict | None = None
+    if cfg.ANALYZE_DEBUG:
+        # Step B/C instrumentation: decode via the traced path so the
+        # winning decoder is reported. The production path below decodes
+        # identically — this is a parallel decode of the same bytes for
+        # diagnostics only (debug mode never runs in production).
+        traced = decode_traced(data, sample_rate=44100)
+        if traced is not None:
+            samples_dbg, sr_dbg, decoder_name = traced
+            debug_pcm = {
+                "decode_44k": pcm_stats(samples_dbg, sr_dbg, decoder_name),
+                "decode_16k": pcm_stats(
+                    downsample(samples_dbg, sr_dbg), cfg.SAMPLE_RATE, decoder_name
+                ),
+            }
+
     decoded = decode(data, sample_rate=44100)
     if decoded is None:
         raise ValueError("no decoder could handle the input")
@@ -168,7 +185,14 @@ def _analyze_sync(data: bytes) -> dict | None:
         samples_44k = samples_44k[:max_samples_44k]
 
     samples = downsample(samples_44k, sr)
-    return state.engine.analyze(samples, audio_44k=samples_44k, sr_44k=sr)
+    payload = state.engine.analyze(samples, audio_44k=samples_44k, sr_44k=sr)
+    if payload is not None and debug_pcm is not None:
+        payload.setdefault("debug", {}).update(debug_pcm)
+        _LOGGER.info(
+            "AX BPM Analyzer debug: %s",
+            json.dumps(payload.get("debug"), default=str),
+        )
+    return payload
 
 
 def main() -> None:

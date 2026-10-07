@@ -1,17 +1,26 @@
 # Tier 3 — AUTHORITATIVE analyzer golden validation (glibc).
 # Mirrors the phase0 job: ubuntu-latest, Python 3.12, pinned requirements.
 # HARD asserts: onnxruntime importable, AXBPM_REQUIRE_ONNX=1, ZERO skips
-# in the golden test files (any skip = job failure).
+# in the golden + contrastive test files (any skip = job failure).
 # Model cache keyed on the model-pin manifest hash; weights NEVER committed.
 #
 # System deps: the golden-test conftest resamples via ctypes on the system
 # libsamplerate (essentia MonoLoader replication) — ubuntu-latest does not
 # ship it, so it is installed explicitly below.
+#
+# PERMANENT PR GATE: pull_request triggers run the golden gates + the
+# contrastive gate on EVERY PR (initialized by the 2026-10-07 Tier 3
+# mood-degeneracy closeout run).
 name: analyzer-golden-validation
 
 on:
   push:
     branches: [main]
+    paths:
+      - "analyzer/**"
+      - "tests/**"
+      - ".github/workflows/analyzer-golden-validation.yml"
+  pull_request:
     paths:
       - "analyzer/**"
       - "tests/**"
@@ -52,8 +61,10 @@ jobs:
       - name: Install system deps (libsamplerate + ffmpeg)
         # libsamplerate0: the golden-test conftest resamples via ctypes on
         # the system lib (essentia MonoLoader replication).
-        # ffmpeg: the integration decode-chain tests exercise the real
-        # ffmpeg fallback path (never silently weaken decode coverage).
+        # ffmpeg: TEST TOOLING ONLY — the integration decode-chain tests
+        # exercise the INTEGRATION copy's ffmpeg tier (kept: HA core ships
+        # the binary; the analyzer copy has no ffmpeg tier — per-runtime
+        # asymmetry, owner decision 2026-10-07).
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsamplerate0 ffmpeg
 
       - name: Install pinned dependencies
@@ -100,3 +111,71 @@ jobs:
       - name: Summary
         if: always()
         run: tail -20 pytest-analyzer.log || true
+
+  # Tier 3 contrastive gate: the three §2 mood-degeneracy previews through
+  # the REAL pipeline (ORT + aubio), asserting the pre-registered P4/P5/P6
+  # predictions. Preview AUDIO is fetched at runtime from the anonymous
+  # Deezer API by track ID (public identifiers, committed in the test) and
+  # cached here — cache ≠ commit, the audio is NEVER in the repo. A fetch
+  # failure FAILS the job (anti-vacuum: never a skip).
+  contrastive-gate:
+    runs-on: ubuntu-latest
+    env:
+      AXBPM_REQUIRE_ONNX: "1"
+      AXBPM_REQUIRE_TEMPO: "1"
+      AXBPM_CI_MODEL_DIR: ${{ github.workspace }}/.axbpm-models
+      AXBPM_SKIP_BOOTSTRAP: "1"
+      AXBPM_CONTRASTIVE_CACHE_DIR: ${{ github.workspace }}/.axbpm-previews
+      AXBPM_CONTRASTIVE_OUT: ${{ github.workspace }}/gate-numbers
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache model weights
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: .axbpm-models
+          key: axbpm-models-${{ hashFiles('analyzer/ax_bpm_analyzer/config.py') }}
+
+      - name: Cache contrastive previews
+        id: preview-cache
+        uses: actions/cache@v4
+        with:
+          path: .axbpm-previews
+          # Keyed on the track-ID set: a track change re-fetches; the
+          # previews themselves are runtime artifacts, never committed.
+          key: axbpm-previews-3802592782-68976286-3155839
+
+      - name: Install system deps (libsamplerate + ffmpeg)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsamplerate0 ffmpeg
+
+      - name: Install pinned dependencies
+        env:
+          CFLAGS: "-Wno-error=incompatible-pointer-types"
+        run: |
+          pip install numpy==2.5.3 setuptools wheel
+          pip install --no-cache-dir --no-build-isolation aubio==0.4.9
+          pip install -r analyzer/requirements-dev.txt
+
+      - name: HARD assert — onnxruntime importable
+        run: python -c "import onnxruntime; print('onnxruntime', onnxruntime.__version__)"
+
+      - name: Run contrastive gate (zero skips allowed)
+        run: |
+          set -o pipefail
+          pytest analyzer/tests/test_contrastive_gate.py -ra -v 2>&1 | tee pytest-contrastive.log
+          if grep -q "SKIPPED" pytest-contrastive.log; then
+            echo "FATAL: skipped tests in the contrastive gate — vacuous pass"; exit 1
+          fi
+
+      - name: Upload gate numbers artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contrastive-gate-numbers
+          path: gate-numbers/contrastive_gate_numbers.json
+          if-no-files-found: warn

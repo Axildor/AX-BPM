@@ -37,6 +37,34 @@ AX BPM resolves its tempo in this order:
 
 On any failure the sensor goes `unknown` — it **never publishes 0**.
 
+### BPM tiers at a glance
+
+| Setup | BPM engine | Mood attributes |
+| --- | --- | --- |
+| Integration alone | **NumPy floor** (built-in estimator) | None (genre-only gating) |
+| Integration + Analyzer add-on | **aubio** (via `/analyze`) | Full (five gating signals + tags) |
+| Analyzer add-on down | **Automatic fallback to the NumPy floor** | Disabled while down |
+
+The analyzer **never blocks the NumPy BPM path**: if the add-on is
+unreachable or its tempo head fails, the built-in estimator takes over
+automatically. The sensor's `bpm_engine` attribute shows which engine
+produced the current BPM (`aubio` or `numpy`; omitted for Deezer-metadata
+BPM, which has no engine). Note: `bpm_engine` describes the BPM *source*
+only — mood attributes can arrive from the cache while the BPM comes
+from the floor; that mixed state is normal, not a bug.
+
+**Which runtimes guarantee the NumPy floor?** The floor needs a decoder:
+the **ffmpeg binary** (present in official HA OS / Supervised / Container
+images) or the miniaudio/soundfile wheels (not installed by this
+integration — HA core installs no custom wheels). Check your runtime with
+`which ffmpeg` on the HA container. Manual container/venv installs without
+ffmpeg have no decoder → tracks where Deezer reports `bpm: 0` resolve to
+`unknown`.
+
+**Coverage limitation:** the analyzer add-on accepts Deezer's 30-second
+preview MP3s. A track with no resolvable preview gets the NumPy floor
+only (no mood attributes, genre-only octave gating).
+
 ## Octave disambiguation (plain language)
 
 Beat trackers sometimes report half or double the real tempo. AX BPM only
@@ -88,6 +116,19 @@ one response.
    and verifies their sha256 checksums).
 3. Start the add-on. It listens on port **8099** (host-mapped by
    default, so `homeassistant.local:8099` works from the integration).
+
+**Why the two decoders differ (one paragraph):** the add-on image
+installs pinned Python wheels (miniaudio → soundfile) and no system
+packages, so its decode chain is wheel-only. The integration runs inside
+Home Assistant core, which installs no custom wheels but ships the
+ffmpeg binary — so the integration's decode chain is
+miniaudio → soundfile → **ffmpeg binary**, and ffmpeg is the tier that
+guarantees the NumPy BPM floor on HA OS/Supervised/Container. Each
+runtime uses what it actually has; nothing is assumed.
+
+**Measured add-on image sizes** (amd64 / aarch64, from the image-size
+audit): ≈ 524 MB / ≈ 521 MB (runtime stage; includes ONNX Runtime +
+model-free base — model weights download to `/data` at first start).
 
 > **Upgrading from the old "AX-BPM Sidecar" add-on?** The add-on was
 > renamed to **AX BPM Analyzer** (new slug `ax_bpm_analyzer`). Uninstall

@@ -19,7 +19,7 @@ import asyncio
 import logging
 
 from .const import ANALYSIS_TIMEOUT
-from .decode import decode_available, decode_mono
+from .decode import decode_available, decode_mono, log_decoder_inventory
 from .tempo_numpy import estimate_bpm
 
 _LOGGER = logging.getLogger(__name__)
@@ -63,6 +63,9 @@ class NumpyAnalyzer:
         if self._availability_logged:
             return
         self._availability_logged = True
+        # One-time decoder inventory (mood-degeneracy closeout): operators
+        # see which decoders are live/absent exactly once — no per-track spam.
+        log_decoder_inventory()
         if decode_available():
             _LOGGER.info(
                 "AX BPM: using built-in NumPy tempo estimator (install the "

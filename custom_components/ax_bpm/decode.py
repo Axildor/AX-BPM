@@ -30,15 +30,34 @@ def _decode_with_miniaudio(path: str) -> tuple[np.ndarray, int] | None:
     try:
         import miniaudio
     except ImportError:
-        return None
+        return None  # absent decoder — expected in HA core, debug-level
     try:
         decoded = miniaudio.decode_file(path, nchannels=1, sample_rate=DECODE_SAMPLE_RATE)
         samples = np.asarray(decoded.samples, dtype=np.float32)
-        if samples.dtype == np.int16 or samples.max(initial=0) > 1.5:
+        # Root fix (mood-degeneracy): the decoder's sample_format is the
+        # source of truth. The old `samples.dtype == np.int16` clause was
+        # dead code — np.asarray(..., dtype=np.float32) coerces at
+        # construction, so it could never fire — and dr_mp3's SIGNED16
+        # output leaked unscaled (abs-max ≈ 32768) into the analysis path.
+        # Structurally identical to the analyzer's decode.py fix.
+        if getattr(decoded, "sample_format", None) == (
+            miniaudio.SampleFormat.SIGNED16
+        ):
+            samples = samples / 32768.0
+        # Belt-and-braces only: any decoder that still leaks an int16-range
+        # buffer is rescaled here (never the primary mechanism).
+        if samples.size and float(np.max(np.abs(samples))) > 1.5:
             samples = samples / 32768.0
         return samples, DECODE_SAMPLE_RATE
     except Exception as err:  # noqa: BLE001 — any decode failure falls through
-        _LOGGER.debug("miniaudio decode failed for %s: %s", path, err)
+        # Fall-through hygiene (mood-degeneracy closeout): an AVAILABLE
+        # decoder that raises must warn loudly — the SIGNED_INT16
+        # AttributeError was silently swallowed in the analyzer copy,
+        # invisibly disabling miniaudio. "Graceful degradation" means
+        # fail-to-fallback LOUDLY.
+        _LOGGER.warning(
+            "miniaudio decode failed for %s (falling through): %s", path, err
+        )
         return None
 
 
@@ -56,7 +75,9 @@ def _decode_with_soundfile(path: str) -> tuple[np.ndarray, int] | None:
             sr = DECODE_SAMPLE_RATE
         return mono, sr
     except Exception as err:  # noqa: BLE001
-        _LOGGER.debug("soundfile decode failed for %s: %s", path, err)
+        _LOGGER.warning(
+            "soundfile decode failed for %s (falling through): %s", path, err
+        )
         return None
 
 
@@ -127,6 +148,40 @@ def decode_available() -> bool:
     except ImportError:
         pass
     return shutil.which("ffmpeg") is not None
+
+
+def log_decoder_inventory() -> None:
+    """One-time decoder-inventory log (mood-degeneracy closeout).
+
+    Operators see which decoders are live ONCE (integration start / first
+    resolution) — no per-track spam. Absent decoders are expected per
+    runtime (HA core: wheels absent, ffmpeg binary present; analyzer
+    image: wheels present, no ffmpeg) — the inventory makes the
+    per-runtime asymmetry visible instead of silent.
+    """
+    live: list[str] = []
+    absent: list[str] = []
+    try:
+        import miniaudio  # noqa: F401
+
+        live.append("miniaudio")
+    except ImportError:
+        absent.append("miniaudio")
+    try:
+        import soundfile  # noqa: F401
+
+        live.append("soundfile")
+    except ImportError:
+        absent.append("soundfile")
+    if shutil.which("ffmpeg"):
+        live.append("ffmpeg-binary")
+    else:
+        absent.append("ffmpeg-binary")
+    _LOGGER.info(
+        "AX BPM decoders: live=%s; absent=%s",
+        ", ".join(live) or "none",
+        ", ".join(absent) or "none",
+    )
 
 
 def decode_mono(path: str) -> tuple[np.ndarray, int] | None:

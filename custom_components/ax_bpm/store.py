@@ -25,7 +25,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-from .const import DURATION_TOLERANCE, SOURCE_CACHE
+from .const import CACHE_PAYLOAD_VERSION, DURATION_TOLERANCE, SOURCE_CACHE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -126,8 +126,19 @@ class BpmCache:
         self._data = dict(data)
 
     def get(self, key: str) -> dict[str, Any] | None:
+        """Return a cache entry, or None when stale/missing.
+
+        Payload versioning (mood-degeneracy fix): entries written before
+        the decode scale fix carry degenerate mood values. An entry whose
+        payload_version differs from CACHE_PAYLOAD_VERSION is treated as
+        absent — the caller re-analyzes and overwrites it. BPM-only
+        entries from the pre-versioning era (no payload_version key) are
+        likewise invalidated: their provenance cannot be verified.
+        """
         entry = self._data.get(key)
         if not entry:
+            return None
+        if entry.get("payload_version") != CACHE_PAYLOAD_VERSION:
             return None
         result = dict(entry)
         result["source"] = SOURCE_CACHE
@@ -136,6 +147,7 @@ class BpmCache:
     async def async_put(self, key: str, result: dict[str, Any]) -> None:
         """Store a resolution result (without the volatile preview URL)."""
         entry = {k: v for k, v in result.items() if k != "preview_url"}
+        entry["payload_version"] = CACHE_PAYLOAD_VERSION
         self._data[key] = entry
         await self._store.async_save(self._data)
 

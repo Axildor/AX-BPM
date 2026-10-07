@@ -28,6 +28,12 @@ from .models import ModelManager
 
 _LOGGER = logging.getLogger(__name__)
 
+# Debug ring buffer (AXBPM_ANALYZE_DEBUG): recent pooled embeddings for
+# pairwise-cosine reporting across consecutive debug analyses. Inert in
+# production — only touched when cfg.ANALYZE_DEBUG is set.
+_DEBUG_EMB_HISTORY: list[np.ndarray] = []
+_DEBUG_EMB_HISTORY_MAX = 8
+
 
 class InferenceEngine:
     """Warm ONNX Runtime sessions + the analyze() pipeline."""
@@ -103,6 +109,58 @@ class InferenceEngine:
         pooled = emb.reshape(-1, emb.shape[-1]).mean(axis=0)
         return pooled.astype(np.float32)
 
+    @staticmethod
+    def _mel_debug(logmel: np.ndarray, patches: np.ndarray) -> dict:
+        """Step D/E numbers: post-log matrix regime + patch assembly."""
+        per_band_min = logmel.min(axis=0)
+        per_band_mean = logmel.mean(axis=0)
+        per_band_max = logmel.max(axis=0)
+        return {
+            "mel_frames": int(logmel.shape[0]),
+            "patch_count": int(patches.shape[0]),
+            "patch_shape": list(patches.shape[1:]),
+            "logmel_global": {
+                "min": round(float(logmel.min()), 4),
+                "mean": round(float(logmel.mean()), 4),
+                "max": round(float(logmel.max()), 4),
+            },
+            # Per-band extremes over the 96 bands (the regime check:
+            # a saturated input shows all bands pinned near the max).
+            "per_band_min_range": [
+                round(float(per_band_min.min()), 4),
+                round(float(per_band_min.max()), 4),
+            ],
+            "per_band_mean_range": [
+                round(float(per_band_mean.min()), 4),
+                round(float(per_band_mean.max()), 4),
+            ],
+            "per_band_max_range": [
+                round(float(per_band_max.min()), 4),
+                round(float(per_band_max.max()), 4),
+            ],
+        }
+
+    @staticmethod
+    def _pooling_debug(pooled: np.ndarray) -> dict:
+        """Step A numbers: pooled L2 + pairwise cosine vs prior analyses."""
+        norm = float(np.linalg.norm(pooled))
+        entry: dict = {"l2_norm": round(norm, 4)}
+        if _DEBUG_EMB_HISTORY:
+            cosines = []
+            for prev in _DEBUG_EMB_HISTORY:
+                denom = norm * float(np.linalg.norm(prev))
+                cos = (
+                    round(float(np.dot(pooled, prev) / denom), 4)
+                    if denom > 0.0
+                    else 0.0
+                )
+                cosines.append(cos)
+            entry["cosine_vs_previous"] = cosines
+        _DEBUG_EMB_HISTORY.append(pooled.astype(np.float32))
+        if len(_DEBUG_EMB_HISTORY) > _DEBUG_EMB_HISTORY_MAX:
+            _DEBUG_EMB_HISTORY.pop(0)
+        return entry
+
     def _head(self, name: str, pooled: np.ndarray) -> np.ndarray | None:
         """Run a classification head on the pooled embedding.
 
@@ -151,7 +209,17 @@ class InferenceEngine:
         patches = frontend.front_end(audio)
         if patches.shape[0] == 0:
             return None
+        debug: dict[str, Any] | None = None
+        if cfg.ANALYZE_DEBUG:
+            # Step D: the post-log matrix fed to effnet (via make_patches).
+            logmel = frontend.logmel_spectrogram(audio)
+            debug = {"mel": self._mel_debug(logmel, patches)}
         pooled = self._embeddings(patches)
+        if debug is not None:
+            debug["pooling"] = self._pooling_debug(pooled)
+            debug["pooled_embedding_preview"] = [
+                round(float(v), 5) for v in pooled[:32]
+            ]
 
         payload: dict[str, Any] = {
             "valence": None,
@@ -213,4 +281,6 @@ class InferenceEngine:
         # else: key omitted entirely — the integration falls back to
         # genre-only gating (never substitutes 0.0).
 
+        if debug is not None:
+            payload["debug"] = debug
         return payload

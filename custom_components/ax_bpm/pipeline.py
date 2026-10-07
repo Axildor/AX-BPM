@@ -291,6 +291,12 @@ class BpmPipeline:
             attrs["intensity"] = round(intensity, 3)
             attrs["calmness"] = round(calmness, 3)
             attrs["mood_scores"] = scores
+            # mood_label (defect 3): argmax ONLY over the COMPLETE five-head
+            # set (atomic rule). Deterministic tie-break via sorted order.
+            # This is the single derivation — the local path merges this
+            # function's output instead of hand-rolling its own label.
+            five = {k: float(scores[k]) for k in sorted(EXPECTED_MOOD_SCORES)}
+            attrs["mood_label"] = max(five, key=five.get)
         return attrs
 
     async def _resolve_inner(
@@ -574,37 +580,56 @@ class BpmPipeline:
                 bpm_raw, mood_scores, genres
             )
 
-            mood_label = (
-                max(mood_scores, key=mood_scores.get) if mood_scores else None
+            # Published mood attributes — ONE derivation (defects 1–3):
+            # the local path merges the SAME _mood_attrs_from_payload the
+            # enrichment path uses, replacing the hand-rolled
+            # mood_scores/mood_label/intensity/calmness. mood_label argmax
+            # fires only over the COMPLETE five-head set; published
+            # intensity/calmness use the pinned /3, /2 formula (the merge
+            # below lets the derivation override the genre-only defaults).
+            # Octave GATING above still uses compute_signals (/4, /3)
+            # internally — no re-thresholding.
+            mood_attrs = (
+                self._mood_attrs_from_payload(mood_payload)
+                if mood_payload
+                else {}
             )
+            mood_attrs.pop("source", None)  # result-level source set below
             source = (
                 SOURCE_ANALYZER
                 if mood_payload is not None and mood_payload.get("bpm")
                 else SOURCE_NUMPY
             )
-            result = ResolutionResult(
-                disambiguated["bpm"],
-                source=source,
-                track=f"{artist} - {title}",
-                isrc=match.get("isrc"),
-                deezer_track_id=match.get("deezer_track_id"),
-                itunes_track_id=match.get("itunes_track_id"),
-                provider=match.get("provider", "deezer"),
-                match_rank=match.get("match_rank"),
-                bpm_raw=bpm_raw,
-                genre=", ".join(genres) if genres else None,
-                genre_source=(
+            # bpm_engine (closeout): which engine produced the LOCAL tempo —
+            # aubio (analyzer add-on) vs numpy (the floor). Deezer-metadata
+            # BPM has no engine → attribute omitted. Semantics: this
+            # describes the BPM SOURCE only; cached mood attributes can
+            # outlive the current run ("mood from cache + BPM from floor"
+            # is a legitimate mixed state, not a bug).
+            attrs = {
+                "bpm_engine": "aubio" if source == SOURCE_ANALYZER else "numpy",
+                "track": f"{artist} - {title}",
+                "isrc": match.get("isrc"),
+                "deezer_track_id": match.get("deezer_track_id"),
+                "itunes_track_id": match.get("itunes_track_id"),
+                "provider": match.get("provider", "deezer"),
+                "match_rank": match.get("match_rank"),
+                "bpm_raw": bpm_raw,
+                "genre": ", ".join(genres) if genres else None,
+                "genre_source": (
                     f"{match.get('provider', 'deezer')}_album"
                     if genres
                     else None
                 ),
-                mood_scores=mood_scores,
-                mood_label=mood_label,
-                intensity=disambiguated["intensity"],
-                calmness=disambiguated["calmness"],
-                octave_corrected=disambiguated["corrected"],
-                octave_rule=disambiguated["rule"],
-                preview_analyzed=True,
+                "intensity": disambiguated["intensity"],
+                "calmness": disambiguated["calmness"],
+                "octave_corrected": disambiguated["corrected"],
+                "octave_rule": disambiguated["rule"],
+                "preview_analyzed": True,
+            }
+            attrs.update(mood_attrs)
+            result = ResolutionResult(
+                disambiguated["bpm"], source=source, **attrs
             )
             await self._cache.async_put(
                 cache_key(match.get("isrc"), artist, title, duration),

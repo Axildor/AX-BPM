@@ -267,6 +267,14 @@ async def test_async_analyze_force_reprobe_when_resolved_url_dies():
 
 @pytest.mark.asyncio
 async def test_cache_migration_drops_legacy_mood_fields():
+    """Legacy SVM mood fields are stripped on load AND the entries are
+    invalidated by payload versioning (mood-degeneracy fix).
+
+    Pre-versioning entries carry no payload_version — their provenance
+    cannot be verified, so they read as absent and the tracks are
+    re-analyzed (first-burst latency, by design). The strip still runs
+    so the on-disk data is clean for the eventual overwrite.
+    """
     cache = BpmCache.__new__(BpmCache)
     cache._store = MagicMock()
     cache._store.async_load = AsyncMock(
@@ -281,14 +289,14 @@ async def test_cache_migration_drops_legacy_mood_fields():
         }
     )
     await cache.async_load()
-    entry = cache.get("isrc:GBDUW0000059")
-    assert entry is not None
-    assert entry["bpm"] == 174.0  # BPM kept
-    assert entry["track"] == "Daft Punk - Test Track"
+    # In-memory data was stripped of the legacy fields…
+    stored = cache._data["isrc:GBDUW0000059"]
     for field in LEGACY_MOOD_FIELDS:
-        assert field not in entry
-    # Non-mood entry untouched.
-    assert cache.get("hash:abc")["bpm"] == 120.0
+        assert field not in stored
+    # …but BOTH entries are invalidated (no payload_version) — the
+    # pre-versioning era cannot be trusted post scale-fix.
+    assert cache.get("isrc:GBDUW0000059") is None
+    assert cache.get("hash:abc") is None
 
 
 @pytest.mark.asyncio

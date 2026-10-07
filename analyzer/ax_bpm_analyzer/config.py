@@ -29,6 +29,13 @@ PORT = 8099
 # /health stays open (auto-detect + config-flow status line need it).
 API_TOKEN = os.environ.get("AXBPM_API_TOKEN", "")
 
+# Debug instrumentation (AXBPM_ANALYZE_DEBUG=1): per-analysis intermediate
+# artifacts (PCM stats, mel regime, patch counts, pooled-embedding L2 +
+# pairwise cosines) are collected and attached to the /analyze payload under
+# a "debug" key + logged as one JSON line. INERT without the env flag —
+# production behavior and the response contract are unchanged.
+ANALYZE_DEBUG = bool(os.environ.get("AXBPM_ANALYZE_DEBUG"))
+
 # /analyze input caps (OOM + latency protection in a ~1 GB container).
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB multipart cap → 413
 MAX_ANALYZE_SECONDS = float(os.environ.get("AXBPM_MAX_ANALYZE_SECONDS", "60"))

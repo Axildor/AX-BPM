@@ -7,7 +7,7 @@
 # Port 8099 stays host-mapped for external-analyzer mode (non-Supervisor
 # installs reach it via homeassistant.local:8099).
 name: AX BPM Analyzer
-version: "1.0.5"
+version: "1.1.0"
 slug: ax_bpm_analyzer
 discovery:
   - ax_bpm
