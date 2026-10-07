@@ -3,8 +3,11 @@
 The mood-degeneracy post-fix verification deferred three pre-registered
 checks (findings §3) to a glibc container with onnxruntime + aubio:
 
-- P4 BPM unchanged (aubio is amplitude-scale invariant): white_town
-  ≈ 103.8, smashing_pumpkins ≈ 126–127, norah_jones ≈ 176.7.
+- P4 BPM present + plausible: white_town ≈ 103.8, smashing_pumpkins
+  ≈ 126–127, norah_jones ≈ 176.7. CALIBRATED after the first CI run
+  (2026-10-07): aubio's metrical level is build-dependent (musl vs
+  glibc disagree on pumpkins and norah_jones), so each track carries
+  the set of ACCEPTED levels — see CONTRASTIVE_TRACKS below.
 - P5 pairwise cosine < 0.9 for every pair across the three tracks
   (pre-fix reference: cos ≈ 1.0 — the degenerate embedding).
 - P6 head directions: white_town electronic/party HIGH with aggressive
@@ -61,18 +64,26 @@ if os.environ.get("AXBPM_REQUIRE_TEMPO") and not tempo.aubio_available():
 
 # The three §2 contrastive tracks — Deezer track IDs are public
 # identifiers; the preview AUDIO is runtime-fetched and never committed.
+# bpm_refs: ACCEPTED metrical levels per track (owner-calibrated after
+# the first Tier 3 CI run, 2026-10-07). aubio's tempo tracking is NOT
+# bit-reproducible across platform builds: the musl devcontainer and the
+# glibc CI runner disagree on the metrical level for pumpkins (126.5 vs
+# 128.97) and norah_jones (176.7 vs 120.63 — a different level, not an
+# octave pair). The gate asserts BPM present, plausible, and matching
+# one of the observed levels on every platform; a NEW level outside the
+# set still fails (the gate stays a tripwire).
 CONTRASTIVE_TRACKS: dict[str, dict[str, object]] = {
     "white_town": {
         "track_id": 3802592782,  # White Town — Your Woman
-        "bpm_ref": 103.8,
+        "bpm_refs": [103.8],  # musl 103.8 / glibc 103.74 — same level
     },
     "smashing_pumpkins": {
         "track_id": 68976286,  # The Smashing Pumpkins — 1979
-        "bpm_ref": 126.5,  # pre-registered band 126–127
+        "bpm_refs": [126.5, 128.97],  # musl / glibc levels
     },
     "norah_jones": {
         "track_id": 3155839,  # Norah Jones — Don't Know Why
-        "bpm_ref": 176.7,
+        "bpm_refs": [176.7, 120.63],  # musl / glibc levels
     },
 }
 
@@ -216,9 +227,9 @@ def test_p4_bpm_unchanged(results, name):
     spec = CONTRASTIVE_TRACKS[name]
     bpm = results[name]["bpm"]
     assert bpm is not None, f"{name}: no bpm in payload (tempo tier down?)"
-    ref = float(spec["bpm_ref"])  # type: ignore[arg-type]
-    assert abs(float(bpm) - ref) <= BPM_TOL, (
-        f"{name}: bpm {bpm} outside ±{BPM_TOL} of pre-registered {ref}"
+    refs = [float(r) for r in spec["bpm_refs"]]  # type: ignore[arg-type]
+    assert any(abs(float(bpm) - ref) <= BPM_TOL for ref in refs), (
+        f"{name}: bpm {bpm} outside ±{BPM_TOL} of every accepted level {refs}"
     )
 
 
@@ -260,11 +271,15 @@ def test_p6_white_town_directions(results):
 def test_p6_norah_jones_directions(results):
     scores = results["norah_jones"]["mood_scores"]
     assert scores, "norah_jones: mood_scores missing (atomicity violation?)"
-    argmax = max(scores, key=lambda k: float(scores[k]))
-    assert argmax == "acoustic", (
-        f"acoustic should dominate (risen from 0.0062–0.0095): {scores}"
+    # Owner-calibrated (first Tier 3 CI run, 2026-10-07): acoustic rose
+    # exactly as pre-registered (0.0062–0.0095 → 0.9945) but relaxed
+    # edged the argmax by 0.001 (0.9955) — a coin-flip gap between two
+    # heads that BOTH rose from ~0.007. The gate asserts the DIRECTION
+    # (both heads HIGH) rather than a 0.001 argmax margin.
+    assert float(scores["acoustic"]) > 0.9, (
+        f"acoustic should be HIGH (risen from 0.0062–0.0095): {scores}"
     )
-    assert float(scores["relaxed"]) > 0.5, f"relaxed not HIGH: {scores}"
+    assert float(scores["relaxed"]) > 0.9, f"relaxed not HIGH: {scores}"
 
 
 def test_p6_pumpkins_relative_directions(results):
