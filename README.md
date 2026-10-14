@@ -186,7 +186,7 @@ auto-detect result. Existing installs with the legacy genre/mood toggles
 or the old `mood_analyzer_url` / `mood_api_token` settings migrate
 automatically on upgrade.
 
-## Fixing a wrong BPM (manual overrides)
+## Fixing a wrong BPM or mood (manual overrides)
 
 Occasionally a track's stored tempo is an octave off — e.g. Alicia Keys
 "A Woman's Worth" is really ~76 BPM but reports 150, making a dancing
@@ -197,38 +197,68 @@ avatar look silly. While the song is playing, fix it with one press:
   currently published value and **persists the correction** for that
   song. The override beats every automatic source (Deezer, analyzer,
   cache) and survives restarts.
+- **Set BPM** (`ax_bpm.set_bpm`) — sets an **exact** BPM (e.g. 174) for
+  the current track. Use when the reported tempo is wrong in a way
+  halve/double cannot express (e.g. Deezer reports 140 for a 174 track).
+  Works even when the sensor is `unknown` — the value you supply becomes
+  the published BPM.
+- **Set mood** (`ax_bpm.set_mood`) — manually sets the mood of the
+  current track. Pick one of the five mood heads (aggressive, party,
+  relaxed, electronic, acoustic); the mood sensor publishes it as its
+  state with matching intensity/calmness, overriding the analyzer's
+  automatic mood on every resolution path.
 - **Clear BPM override** (`ax_bpm.clear_override`) — removes the
-  correction for the current track, restoring automatic resolution.
+  override (BPM and/or mood) for the current track, restoring automatic
+  resolution.
 - **Clear BPM cache** (`ax_bpm.clear_cache`) — wipes all resolved track
   values (overrides are kept). Useful after a Deezer-side data change.
 - **Clear BPM overrides** (`ax_bpm.clear_overrides`) — removes ALL
-  manual corrections (the cache is kept).
+  manual corrections, BPM and mood (the cache is kept).
 
 Halve/double apply to the value the sensor is currently showing; if the
 sensor is `unknown` there is nothing to correct (a warning is logged).
-Overridden tracks show `source: manual_override` and the rule
-(`manual_half` / `manual_double`) in the sensor attributes.
+`set_bpm` and `set_mood` do not have this restriction — `set_bpm` works
+on unknown tracks too. Overridden tracks show `source: manual_override`
+and the rule (`manual_half` / `manual_double` / `manual_set`) in the
+sensor attributes; a mood override additionally shows
+`mood_override: true`.
 
 ## Sensor
 
 `sensor.ax_bpm` — state is the final BPM (unit `BPM`, measurement class).
 Attributes include the source (`deezer_metadata` / `analyzer` / `numpy` /
 `cache` / `manual_override`), track name, ISRC, Deezer track id, match
-rank, the pre-correction raw BPM, album genre, mood scores,
-intensity/calmness, the octave rule applied, and the last update time.
-
-When the analyzer responds (Deezer-metadata path, or the concurrent local
-path), additional mood attributes are published:
-`mood_tags` (top-N above threshold), `valence`, `arousal`,
-`valence_std`/`arousal_std`, `danceability`, `analyzed_seconds`,
-`model_versions`, and `source="analyzer"`. The `intensity`/`calmness`
-attribute names are kept for automation back-compat — they are now
-computed from the analyzer tags (aggressive/party/electronic vs
-relaxed/acoustic averages) with arousal as tie-breaker.
+rank, the pre-correction raw BPM, album genre, the octave rule applied,
+and the last update time.
 
 - **Pause** retains the last value. **Stop / off** sets `unknown`.
-- Mood attributes never delay the BPM publish: on the Deezer-metadata
-  path they arrive as a second state write after the BPM is published.
+
+## Mood sensor
+
+`sensor.ax_bpm_mood` — state is the mood label of the current track:
+`aggressive` / `party` / `relaxed` / `electronic` / `acoustic`, or
+`unknown` when no mood data is available. Attributes include
+`mood_scores` (the five-head scores), `intensity`/`calmness`, and
+`mood_override: true` when the mood was set manually.
+
+When the analyzer responds (Deezer-metadata path, or the concurrent local
+path), additional attributes are published: `mood_tags` (top-N above
+threshold), `valence`, `arousal`, `valence_std`/`arousal_std`,
+`danceability`, `analyzed_seconds`, `model_versions`, and
+`source="analyzer"`. The `intensity`/`calmness` attribute names are kept
+for automation back-compat — they are now computed from the analyzer
+tags (aggressive/party/electronic vs relaxed/acoustic averages) with
+arousal as tie-breaker.
+
+- **Pause** retains the last mood. **Stop / off** sets `unknown`.
+- Mood never delays the BPM publish: on the Deezer-metadata path it
+  arrives as a second update after the BPM is published.
+
+> **Migrating from 3.2.x:** mood attributes (`mood_scores`, `mood_label`,
+> `intensity`, `calmness`, `mood_override`) no longer appear on
+> `sensor.ax_bpm` — read them from `sensor.ax_bpm_mood` instead, e.g.
+> `states('sensor.ax_bpm_mood')` instead of
+> `state_attr('sensor.ax_bpm', 'mood_label')`.
 
 ## Analyzer status sensor
 

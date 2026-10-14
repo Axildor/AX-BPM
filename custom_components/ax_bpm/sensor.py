@@ -11,6 +11,11 @@ the analyzer responds, mood attributes arrive as a second
 `async_write_ha_state`. The local-analysis path already carries mood
 attributes in the first publish (analyzer tempo+mood in one call, or
 NumPy floor with a concurrent mood call).
+
+Mood attributes are NOT published on this entity (3.3.0 split): they
+are forwarded to the dedicated mood sensor (mood_sensor.py) via the
+`mood_update` hook in hass.data[DOMAIN][entry_id]. This entity keeps
+only BPM-related attributes (bpm_raw, isrc, source, bpm_engine, …).
 """
 
 from __future__ import annotations
@@ -36,7 +41,8 @@ from .const import (
     TRACK_DEBOUNCE,
     UNIT_BPM,
 )
-from .pipeline import BpmPipeline
+from .mood_sensor import AxBpmMoodSensor
+from .pipeline import BpmPipeline, split_mood_attrs
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,6 +63,7 @@ async def async_setup_entry(
     async_add_entities(
         [
             AxBpmSensor(entry, media_player_id, pipeline),
+            AxBpmMoodSensor(entry, media_player_id),
             AxBpmAnalyzerStatusSensor(entry, entry_data["status_coordinator"]),
         ]
     )
@@ -138,11 +145,12 @@ class AxBpmSensor(SensorEntity):
 
         state = new_state.state
 
-        # Stop / off / unavailable → unknown.
+        # Stop / off / unavailable → unknown (both entities).
         if state in (STATE_OFF, "unavailable", "unknown"):
             self._cancel_debounce()
             self._attr_native_value = None
             self._last_track = None
+            self._push_mood(None)
             self.async_write_ha_state()
             return
 
@@ -214,15 +222,22 @@ class AxBpmSensor(SensorEntity):
             # stale valid-looking metadata alongside unknown.
             self._attr_native_value = None
             self._attr_extra_state_attributes = {}
+            self._push_mood(None)
             self.async_write_ha_state()
             return
+
+        # Mood attrs split off at publish time (3.3.0): the BPM sensor
+        # keeps only BPM-related attributes; mood goes to the dedicated
+        # mood sensor via the mood_update hook.
+        bpm_attrs, mood_attrs = split_mood_attrs(result.attrs)
 
         # BPM-first publish (unchanged path).
         self._attr_native_value = result.bpm
         self._attr_extra_state_attributes = {
-            **result.attrs,
+            **bpm_attrs,
             "last_updated": datetime.now(UTC).isoformat(),
         }
+        self._push_mood(mood_attrs)
         self.async_write_ha_state()
 
         # Post-publish mood enrichment (Deezer-metadata path only; the
@@ -230,23 +245,36 @@ class AxBpmSensor(SensorEntity):
         # adds the mood attributes when the analyzer responds. Never
         # delays or blocks the BPM publish above.
         try:
-            mood_attrs = await self._pipeline.async_enrich(
+            enrich_attrs = await self._pipeline.async_enrich(
                 artist, title, duration, result
             )
         except Exception:
             _LOGGER.debug("AX BPM mood enrichment failed", exc_info=True)
-            mood_attrs = None
-        if not mood_attrs:
+            enrich_attrs = None
+        if not enrich_attrs:
             return
         # The track changed while enriching → discard the stale mood.
         if self._current_track_id() != track_id:
             return
-        self._attr_extra_state_attributes = {
-            **self._attr_extra_state_attributes,
-            **mood_attrs,
-            "last_updated": datetime.now(UTC).isoformat(),
-        }
+        self._push_mood(enrich_attrs)
         self.async_write_ha_state()
+
+    def _push_mood(self, mood_attrs: dict | None) -> None:
+        """Forward mood attrs to the mood sensor (no-op when absent).
+
+        The mood sensor registers the hook in async_added_to_hass; until
+        then (or when it was removed) the push is silently dropped — the
+        next resolution re-publishes anyway.
+        """
+        entry = getattr(self, "_entry", None)
+        if entry is None:
+            return
+        entry_data = self.hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if not entry_data:
+            return
+        mood_update = entry_data.get("mood_update")
+        if mood_update:
+            mood_update(mood_attrs)
 
     def _current_track_id(self) -> tuple | None:
         state = self.hass.states.get(self._media_player_id)

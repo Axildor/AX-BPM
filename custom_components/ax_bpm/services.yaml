@@ -1,10 +1,13 @@
-# AX BPM services — manual BPM corrections + cache management.
+# AX BPM services — manual BPM/mood corrections + cache management.
 #
-# All services act on the configured media player's CURRENT track; no
-# parameters. Halve/double apply to the currently published BPM and
-# persist as a manual override (survives restarts, beats every automatic
-# source). clear_cache wipes the BPM cache only; clear_overrides wipes
-# the manual overrides only — the two stores are independent.
+# All services act on the configured media player's CURRENT track.
+# Halve/double apply to the currently published BPM and persist as a
+# manual override (survives restarts, beats every automatic source).
+# set_bpm sets an exact value (works even when the sensor is unknown);
+# set_mood picks one of the five mood heads. clear_override removes the
+# whole per-track override (BPM AND mood); clear_cache wipes the BPM
+# cache only; clear_overrides wipes the manual overrides only — the two
+# stores are independent.
 
 halve_bpm:
   name: Halve BPM
@@ -22,11 +25,54 @@ double_bpm:
     (e.g. 75 instead of 150). No effect when the sensor is unknown.
   fields: {}
 
+set_bpm:
+  name: Set BPM
+  description: >-
+    Set an exact BPM for the playing track and persist it as a manual
+    override. Use when the reported tempo is wrong in a way halve/double
+    cannot express (e.g. Deezer reports 140 for a 174 track). Works even
+    when the sensor is unknown — the value you supply becomes the
+    published BPM.
+  fields:
+    bpm:
+      name: BPM
+      description: The correct tempo of this track (20–300).
+      required: true
+      example: 174
+      selector:
+        number:
+          min: 20
+          max: 300
+          step: 0.1
+
+set_mood:
+  name: Set mood
+  description: >-
+    Manually set the mood of the playing track and persist it as an
+    override. The chosen mood head is published as the mood label with
+    one-hot synthetic scores (chosen head = 1.0, others = 0.0) and
+    matching intensity/calmness. Beats the analyzer's automatic mood on
+    every resolution path.
+  fields:
+    mood:
+      name: Mood
+      description: The mood head to publish for this track.
+      required: true
+      example: relaxed
+      selector:
+        select:
+          options:
+            - aggressive
+            - party
+            - relaxed
+            - electronic
+            - acoustic
+
 clear_override:
   name: Clear BPM override
   description: >-
-    Remove the manual halve/double override for the currently playing
-    track, restoring automatic resolution on the next play.
+    Remove the manual override (BPM and/or mood) for the currently
+    playing track, restoring automatic resolution on the next play.
   fields: {}
 
 clear_cache:
@@ -40,6 +86,6 @@ clear_cache:
 clear_overrides:
   name: Clear all BPM overrides
   description: >-
-    Remove ALL manual halve/double overrides. The BPM cache is NOT
+    Remove ALL manual overrides (BPM and mood). The BPM cache is NOT
     affected.
   fields: {}

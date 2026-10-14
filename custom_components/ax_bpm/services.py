@@ -1,11 +1,15 @@
-"""Service handlers for manual BPM corrections and cache management.
+"""Service handlers for manual BPM/mood corrections and cache management.
 
-Five services, all operating on the configured media player's CURRENT
+Seven services, all operating on the configured media player's CURRENT
 track (the same artist/title/duration the sensor resolves):
 
   ax_bpm.halve_bpm       — halve the currently published BPM, persist it
   ax_bpm.double_bpm      — double the currently published BPM, persist it
-  ax_bpm.clear_override  — remove the manual override for the current track
+  ax_bpm.set_bpm         — set an exact BPM for the current track
+  ax_bpm.set_mood        — set the mood (one of the five heads) for the
+                           current track
+  ax_bpm.clear_override  — remove the manual override (BPM AND mood)
+                           for the current track
   ax_bpm.clear_cache     — wipe the BPM cache (overrides untouched)
   ax_bpm.clear_overrides — wipe ALL manual overrides
 
@@ -14,6 +18,11 @@ Design notes:
   user sees), then persist to the override store. The pipeline's
   override-first check makes the correction stick across re-resolutions
   and restarts.
+- set_bpm does NOT require a published BPM — the user supplies the
+  value, so it also works (and rescues) tracks that resolve to unknown.
+- set_mood stores one of the five mood heads; the pipeline publishes
+  one-hot synthetic scores through the same formula as the analyzer
+  path.
 - When the sensor is unknown (no BPM published), halve/double are no-ops
   with a WARNING — never publish 0 or None.
 - Buttons (button.py) call these same handlers via hass.services.async_call,
@@ -33,20 +42,34 @@ from homeassistant.core import HomeAssistant, ServiceCall
 
 from .const import (
     DOMAIN,
+    MOOD_LABELS,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 SERVICE_HALVE_BPM = "halve_bpm"
 SERVICE_DOUBLE_BPM = "double_bpm"
+SERVICE_SET_BPM = "set_bpm"
+SERVICE_SET_MOOD = "set_mood"
 SERVICE_CLEAR_OVERRIDE = "clear_override"
 SERVICE_CLEAR_CACHE = "clear_cache"
 SERVICE_CLEAR_OVERRIDES = "clear_overrides"
 
-# No parameters: every service acts on the (single) configured entry's
-# media player and its current track. Multi-entry installs get one set
-# of services per entry via the entity/device target below.
+# No parameters: the correction services act on the (single) configured
+# entry's media player and its current track. Multi-entry installs get
+# one set of services per entry via the entity/device target below.
 SERVICE_SCHEMA = vol.Schema({})
+
+# set_bpm: exact tempo. Range covers all plausible music tempos; values
+# outside are user error (a 20–300 BPM window is generous).
+SET_BPM_SCHEMA = vol.Schema({
+    vol.Required("bpm"): vol.All(vol.Coerce(float), vol.Range(min=20, max=300)),
+})
+
+# set_mood: one of the five mood heads.
+SET_MOOD_SCHEMA = vol.Schema({
+    vol.Required("mood"): vol.In(MOOD_LABELS),
+})
 
 ATTR_MEDIA_PLAYER = "media_player"
 
@@ -137,6 +160,53 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def _double(call: ServiceCall) -> None:
         await _correct(call, 2.0)
 
+    async def _set_bpm(call: ServiceCall) -> None:
+        bpm = float(call.data["bpm"])
+        for entry in _entries(hass):
+            data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+            if not data:
+                continue
+            pipeline = data["pipeline"]
+            media_player_id = data.get("media_player")
+            track = _current_track(hass, media_player_id)
+            if not track:
+                _LOGGER.warning(
+                    "AX BPM set_bpm: media player %s is not playing a "
+                    "track with artist/title metadata — nothing to set",
+                    media_player_id,
+                )
+                continue
+            artist, title, _duration = track
+            await pipeline.async_set_bpm(artist, title, bpm)
+            _LOGGER.info(
+                "AX BPM set_bpm: %s - %s → %.1f BPM (manual_set)",
+                artist, title, bpm,
+            )
+        _republish(hass, None)
+
+    async def _set_mood(call: ServiceCall) -> None:
+        label = call.data["mood"]
+        for entry in _entries(hass):
+            data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+            if not data:
+                continue
+            pipeline = data["pipeline"]
+            media_player_id = data.get("media_player")
+            track = _current_track(hass, media_player_id)
+            if not track:
+                _LOGGER.warning(
+                    "AX BPM set_mood: media player %s is not playing a "
+                    "track with artist/title metadata — nothing to set",
+                    media_player_id,
+                )
+                continue
+            artist, title, _duration = track
+            await pipeline.async_set_mood(artist, title, label)
+            _LOGGER.info(
+                "AX BPM set_mood: %s - %s → %s", artist, title, label
+            )
+        _republish(hass, None)
+
     async def _clear_override(call: ServiceCall) -> None:
         for entry in _entries(hass):
             data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
@@ -190,6 +260,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     )
     hass.services.async_register(
         DOMAIN, SERVICE_DOUBLE_BPM, _double, schema=SERVICE_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_BPM, _set_bpm, schema=SET_BPM_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_MOOD, _set_mood, schema=SET_MOOD_SCHEMA
     )
     hass.services.async_register(
         DOMAIN, SERVICE_CLEAR_OVERRIDE, _clear_override, schema=SERVICE_SCHEMA

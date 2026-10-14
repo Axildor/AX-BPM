@@ -1,4 +1,4 @@
-"""Tests for the manual BPM override suite.
+"""Tests for the manual BPM + mood override suite.
 
 Covers:
 - BpmOverrideStore CRUD (put/get/remove/clear) + persistence via mocked Store
@@ -7,6 +7,8 @@ Covers:
 - async_apply_correction math (halve/double) + invalid factor rejection
 - clear_cache / clear_overrides independence
 - override survives a "restart" (fresh store instance, same mocked file)
+- 3.3.0: manual_set rule, mood overrides (set/merge/clear), synthetic
+  one-hot attrs with formula parity, enrichment skip, service handlers
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import pytest
 from ax_bpm.const import (
     RULE_MANUAL_DOUBLE,
     RULE_MANUAL_HALF,
+    RULE_MANUAL_SET,
     SOURCE_OVERRIDE,
 )
 from ax_bpm.overrides import BpmOverrideStore, override_key
@@ -286,3 +289,207 @@ async def test_clear_override_restores_cache_value():
     result = await pipeline.async_resolve("Alicia Keys", "A Woman's Worth", 302)
     assert result.bpm == 149.8
     assert result.source == "cache"
+
+
+# ---------------------------------------------------------------------------
+# 3.3.0: manual_set (exact BPM) + mood overrides — store level
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_set_bpm_stores_manual_set_rule():
+    store, _ = _make_store_with_file()
+    await store.async_put("A", "B", 174.0, RULE_MANUAL_SET, 174.0)
+    entry = store.get("A", "B")
+    assert entry["bpm"] == 174.0
+    assert entry["rule"] == RULE_MANUAL_SET
+
+
+@pytest.mark.asyncio
+async def test_set_mood_creates_mood_only_entry():
+    store, _ = _make_store_with_file()
+    await store.async_set_mood("A", "B", "relaxed")
+    entry = store.get("A", "B")
+    assert entry["mood_label"] == "relaxed"
+    assert "bpm" not in entry  # mood-only: no BPM aspect
+
+
+@pytest.mark.asyncio
+async def test_set_mood_merges_into_existing_bpm_entry():
+    store, _ = _make_store_with_file()
+    await store.async_put("A", "B", 174.0, RULE_MANUAL_SET, 174.0)
+    created = store.get("A", "B")["created"]
+    await store.async_set_mood("A", "B", "party")
+    entry = store.get("A", "B")
+    assert entry["bpm"] == 174.0
+    assert entry["rule"] == RULE_MANUAL_SET
+    assert entry["mood_label"] == "party"
+    assert entry["created"] == created  # first-write timestamp preserved
+
+
+@pytest.mark.asyncio
+async def test_bpm_put_merges_into_existing_mood_entry():
+    store, _ = _make_store_with_file()
+    await store.async_set_mood("A", "B", "relaxed")
+    await store.async_put("A", "B", 90.0, RULE_MANUAL_HALF, 180.0)
+    entry = store.get("A", "B")
+    assert entry["mood_label"] == "relaxed"  # mood survives the BPM write
+    assert entry["bpm"] == 90.0
+
+
+@pytest.mark.asyncio
+async def test_set_mood_rejects_invalid_label():
+    store, _ = _make_store_with_file()
+    with pytest.raises(ValueError):
+        await store.async_set_mood("A", "B", "happy")
+
+
+@pytest.mark.asyncio
+async def test_clear_removes_both_aspects():
+    store, _ = _make_store_with_file()
+    await store.async_put("A", "B", 174.0, RULE_MANUAL_SET, 174.0)
+    await store.async_set_mood("A", "B", "acoustic")
+    assert await store.async_remove("A", "B") is True
+    assert store.get("A", "B") is None
+
+
+# ---------------------------------------------------------------------------
+# 3.3.0: pipeline — synthetic mood attrs + replacement on all paths
+# ---------------------------------------------------------------------------
+
+def _mood_payload() -> dict:
+    """An analyzer payload with a complete five-head set (automatic mood)."""
+    return {
+        "mood_scores": {
+            "aggressive": 0.9, "party": 0.8, "relaxed": 0.1,
+            "electronic": 0.7, "acoustic": 0.0,
+        },
+        "valence": 0.6, "arousal": 0.8,
+    }
+
+
+@pytest.mark.asyncio
+async def test_mood_only_override_replaces_cache_mood():
+    cache, _ = _make_cache_with_file()
+    overrides, _ = _make_store_with_file()
+    await cache.async_put(
+        cache_key(None, "A", "B", 302),
+        {"bpm": 120.0, "source": "cache", **_mood_attrs_from_payload(_mood_payload())},
+    )
+    await overrides.async_set_mood("A", "B", "relaxed")
+    pipeline = _make_pipeline(cache, overrides)
+    result = await pipeline.async_resolve("A", "B", 302)
+    assert result.bpm == 120.0  # BPM untouched (mood-only override)
+    assert result.source == "cache"
+    assert result.attrs["mood_label"] == "relaxed"
+    assert result.attrs["mood_scores"] == {
+        "aggressive": 0.0, "party": 0.0, "relaxed": 1.0,
+        "electronic": 0.0, "acoustic": 0.0,
+    }
+    assert result.attrs["intensity"] == 0.0
+    assert result.attrs["calmness"] == 0.5
+    assert result.attrs["mood_override"] is True
+
+
+@pytest.mark.asyncio
+async def test_bpm_and_mood_override_hit_publishes_both():
+    cache, _ = _make_cache_with_file()
+    overrides, _ = _make_store_with_file()
+    await overrides.async_put("A", "B", 174.0, RULE_MANUAL_SET, 140.0)
+    await overrides.async_set_mood("A", "B", "electronic")
+    pipeline = _make_pipeline(cache, overrides)
+    result = await pipeline.async_resolve("A", "B", 302)
+    assert result.bpm == 174.0
+    assert result.source == SOURCE_OVERRIDE
+    assert result.attrs["mood_label"] == "electronic"
+    assert result.attrs["mood_override"] is True
+    assert result.attrs["intensity"] == 0.333  # (1+0+0)/3, rounded to 3 dp
+    assert result.attrs["calmness"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_no_mood_override_keeps_automatic_mood():
+    cache, _ = _make_cache_with_file()
+    overrides, _ = _make_store_with_file()
+    automatic = _mood_attrs_from_payload(_mood_payload())
+    await cache.async_put(
+        cache_key(None, "A", "B", 302),
+        {"bpm": 120.0, "source": "cache", **automatic},
+    )
+    pipeline = _make_pipeline(cache, overrides)
+    result = await pipeline.async_resolve("A", "B", 302)
+    assert result.attrs["mood_label"] == automatic["mood_label"]
+    assert "mood_override" not in result.attrs
+
+
+@pytest.mark.asyncio
+async def test_enrichment_skipped_when_mood_override_exists():
+    cache, _ = _make_cache_with_file()
+    overrides, _ = _make_store_with_file()
+    await overrides.async_set_mood("A", "B", "relaxed")
+    pipeline = _make_pipeline(cache, overrides)
+    pipeline._mood_ready = True
+    pipeline._octave_mode = "genre_mood"
+    from ax_bpm.pipeline import ResolutionResult
+
+    result = ResolutionResult(120.0, source="deezer_metadata", isrc="ISRC123")
+    assert await pipeline.async_enrich("A", "B", 302, result) is None
+
+
+def _mood_attrs_from_payload(payload: dict) -> dict:
+    """Mirror of BpmPipeline._mood_attrs_from_payload for test fixtures."""
+    scores = payload["mood_scores"]
+    intensity = (scores["aggressive"] + scores["party"] + scores["electronic"]) / 3
+    calmness = (scores["relaxed"] + scores["acoustic"]) / 2
+    return {
+        "mood_scores": scores,
+        "mood_label": max(scores, key=scores.get),
+        "intensity": round(intensity, 3),
+        "calmness": round(calmness, 3),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 3.3.0: formula parity — override path vs analyzer-payload path
+# ---------------------------------------------------------------------------
+
+def test_formula_parity_override_vs_payload():
+    """One-hot override scores through the payload derivation must equal
+    the override derivation (structural parity, not copy-paste)."""
+    from ax_bpm.pipeline import BpmPipeline as BP
+
+    override_attrs = BP._mood_attrs_from_override("relaxed")
+    payload_attrs = BP._mood_attrs_from_payload({
+        "mood_scores": override_attrs["mood_scores"],
+        "arousal": None,
+    })
+    assert override_attrs["intensity"] == payload_attrs["intensity"]
+    assert override_attrs["calmness"] == payload_attrs["calmness"]
+    assert override_attrs["mood_label"] == payload_attrs["mood_label"]
+
+
+# ---------------------------------------------------------------------------
+# 3.3.0: pipeline async_set_bpm / async_set_mood
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_pipeline_async_set_bpm():
+    cache, _ = _make_cache_with_file()
+    overrides, _ = _make_store_with_file()
+    pipeline = _make_pipeline(cache, overrides)
+    stored = await pipeline.async_set_bpm("A", "B", 174.0)
+    assert stored == 174.0
+    entry = overrides.get("A", "B")
+    assert entry["rule"] == RULE_MANUAL_SET
+    with pytest.raises(ValueError):
+        await pipeline.async_set_bpm("A", "B", 0)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_async_set_mood():
+    cache, _ = _make_cache_with_file()
+    overrides, _ = _make_store_with_file()
+    pipeline = _make_pipeline(cache, overrides)
+    await pipeline.async_set_mood("A", "B", "party")
+    assert overrides.get("A", "B")["mood_label"] == "party"
+    with pytest.raises(ValueError):
+        await pipeline.async_set_mood("A", "B", "happy")

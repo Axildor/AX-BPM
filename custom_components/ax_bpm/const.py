@@ -21,12 +21,14 @@ OCTAVE_GENRE_ONLY = "genre_only"
 OCTAVE_GENRE_MOOD = "genre_mood"
 OCTAVE_MODES = [OCTAVE_OFF, OCTAVE_GENRE_ONLY, OCTAVE_GENRE_MOOD]
 
-# Manual per-track BPM overrides (halve/double buttons + services).
+# Manual per-track BPM + mood overrides (halve/double/set services).
 # Stored in their own HA Store, keyed by normalized artist|title —
-# see overrides.py. An override beats every automatic source.
+# see overrides.py. An override beats every automatic source. One
+# entry per track may carry a BPM override, a mood override, or both.
 OVERRIDE_STORAGE_KEY = "ax_bpm_overrides"
 RULE_MANUAL_HALF = "manual_half"
 RULE_MANUAL_DOUBLE = "manual_double"
+RULE_MANUAL_SET = "manual_set"
 
 # Manual analyzer URL override (empty = auto-detect only).
 CONF_ANALYZER_URL = "analyzer_url"
@@ -130,6 +132,10 @@ CONF_ANALYZER_API_TOKEN = "analyzer_api_token"
 EXPECTED_MOOD_SCORES = frozenset({
     "aggressive", "party", "relaxed", "electronic", "acoustic",
 })
+
+# The five mood heads as an ordered list for the set_mood service
+# selector. Sorted for deterministic ordering across restarts.
+MOOD_LABELS = sorted(EXPECTED_MOOD_SCORES)
 
 # Cache payload version (mood-degeneracy fix): entries written before the
 # decode scale fix carry degenerate mood values (all heads saturated by

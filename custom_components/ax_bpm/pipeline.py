@@ -50,6 +50,7 @@ from .const import (
     OVERALL_BUDGET,
     RULE_MANUAL_DOUBLE,
     RULE_MANUAL_HALF,
+    RULE_MANUAL_SET,
     SOURCE_ANALYZER,
     SOURCE_DEEZER,
     SOURCE_NUMPY,
@@ -64,6 +65,34 @@ _LOGGER = logging.getLogger(__name__)
 
 # Legacy cache fields dropped by the v1 → v2 migration (Essentia SVM era).
 LEGACY_MOOD_FIELDS = ("mood_scores", "mood_label")
+
+# Attribute keys that belong to the MOOD entity, not the BPM sensor.
+# split_mood_attrs() partitions a result's attrs dict at publish time so
+# the BPM sensor carries only BPM-related attributes and the mood sensor
+# carries only mood ones. The cache schema is untouched — mood attrs stay
+# merged in cached entries and are split again on every publish.
+MOOD_ATTR_KEYS = frozenset({
+    "mood_scores", "mood_label", "intensity", "calmness", "mood_override",
+})
+
+
+def split_mood_attrs(attrs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Partition attrs into (bpm_attrs, mood_attrs) at publish time.
+
+    Mood keys move to the mood entity; everything else stays on the BPM
+    sensor. Keys with a None value are dropped from the mood dict (the
+    resolution paths emit None placeholders for absent mood data — an
+    unknown mood must not publish None-valued attributes).
+    """
+    mood: dict[str, Any] = {}
+    bpm: dict[str, Any] = {}
+    for key, value in attrs.items():
+        if key in MOOD_ATTR_KEYS:
+            if value is not None:
+                mood[key] = value
+        else:
+            bpm[key] = value
+    return bpm, mood
 
 
 class ResolutionResult:
@@ -142,9 +171,26 @@ class BpmPipeline:
         # wait for it and reuse its outcome via the cache.
         async with self._lock:
             self._current_token = token
-            return await self._resolve_inner(
+            result = await self._resolve_inner(
                 track_artist, track_title, duration, token
             )
+        # Manual mood override — applied POST-resolution so it uniformly
+        # beats cache, Deezer, and local analysis. The BPM-override
+        # short-circuit already merged its own mood attrs (checked via
+        # the mood_override marker), so only non-override results are
+        # rewritten here. Octave gating is NOT re-run on synthetic
+        # scores: disambiguation already ran on the automatic estimate.
+        if result is not None and "mood_override" not in result.attrs:
+            override = (
+                self._overrides.get(track_artist, track_title)
+                if self._overrides is not None
+                else None
+            )
+            if override and override.get("mood_label"):
+                result.attrs.update(
+                    self._mood_attrs_from_override(override["mood_label"])
+                )
+        return result
 
     @property
     def overrides(self) -> BpmOverrideStore | None:
@@ -174,6 +220,32 @@ class BpmPipeline:
             artist, title, corrected, rule, current_bpm
         )
         return corrected
+
+    async def async_set_bpm(
+        self, artist: str, title: str, bpm: float
+    ) -> float:
+        """Store an exact-value manual BPM override for this track.
+
+        Unlike halve/double this does NOT require a published BPM — the
+        user supplies the value, so it also works (and rescues) tracks
+        that currently resolve to unknown. Returns the stored value.
+        """
+        if not bpm or bpm <= 0:
+            raise ValueError(f"override bpm must be > 0, got {bpm}")
+        if self._overrides is None:
+            raise RuntimeError("override store not configured")
+        await self._overrides.async_put(
+            artist, title, float(bpm), RULE_MANUAL_SET, float(bpm)
+        )
+        return float(bpm)
+
+    async def async_set_mood(
+        self, artist: str, title: str, label: str
+    ) -> None:
+        """Store a manual mood override for this track (five heads)."""
+        if self._overrides is None:
+            raise RuntimeError("override store not configured")
+        await self._overrides.async_set_mood(artist, title, label)
 
     async def async_clear_override(self, artist: str, title: str) -> bool:
         """Remove the manual override for this track. True when one existed."""
@@ -209,6 +281,12 @@ class BpmPipeline:
             return None
         if result.source != SOURCE_DEEZER:
             return None  # local path already carries mood attrs
+        # A manual mood override beats the analyzer — skip the preview
+        # download + /analyze call entirely.
+        if self._overrides is not None:
+            override = self._overrides.get(artist, title)
+            if override and override.get("mood_label"):
+                return None
 
         try:
             preview = await self._deezer.download_preview_bytes(
@@ -246,6 +324,50 @@ class BpmPipeline:
         }
         return scores or None
 
+    @staticmethod
+    def _derive_intensity_calmness(
+        scores: dict[str, float], arousal: float | None
+    ) -> tuple[float, float]:
+        """The pinned published intensity/calmness formula.
+
+        Shared by the analyzer-payload path AND the manual-override path
+        so the two stay in structural parity (one derivation, not
+        copy-paste). intensity = mean(aggressive, party, electronic),
+        calmness = mean(relaxed, acoustic); a near-tie is broken by the
+        analyzer arousal signal when available.
+        """
+        intensity = (
+            float(scores["aggressive"])
+            + float(scores["party"])
+            + float(scores["electronic"])
+        ) / 3.0
+        calmness = (
+            float(scores["relaxed"]) + float(scores["acoustic"])
+        ) / 2.0
+        if arousal is not None and abs(intensity - calmness) < 0.05:
+            intensity = max(intensity, float(arousal))
+            calmness = min(calmness, 1.0 - float(arousal))
+        return round(intensity, 3), round(calmness, 3)
+
+    @classmethod
+    def _mood_attrs_from_override(cls, label: str) -> dict[str, Any]:
+        """Synthetic mood attributes for a manual mood override.
+
+        One-hot scores over the five heads (chosen head = 1.0, others
+        0.0) run through the SAME published formula as the analyzer
+        path, so intensity/calmness/mood_label stay consistent. The
+        mood_override attribute marks the values as user-set.
+        """
+        scores = {k: 1.0 if k == label else 0.0 for k in EXPECTED_MOOD_SCORES}
+        intensity, calmness = cls._derive_intensity_calmness(scores, None)
+        return {
+            "mood_scores": scores,
+            "mood_label": label,
+            "intensity": intensity,
+            "calmness": calmness,
+            "mood_override": True,
+        }
+
     @classmethod
     def _mood_attrs_from_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:
         """Map an analyzer /analyze payload to sensor mood attributes.
@@ -276,20 +398,11 @@ class BpmPipeline:
         ):
             scores = None
         if scores:
-            intensity = (
-                float(scores["aggressive"])
-                + float(scores["party"])
-                + float(scores["electronic"])
-            ) / 3.0
-            calmness = (
-                float(scores["relaxed"]) + float(scores["acoustic"])
-            ) / 2.0
-            arousal = payload.get("arousal")
-            if arousal is not None and abs(intensity - calmness) < 0.05:
-                intensity = max(intensity, float(arousal))
-                calmness = min(calmness, 1.0 - float(arousal))
-            attrs["intensity"] = round(intensity, 3)
-            attrs["calmness"] = round(calmness, 3)
+            intensity, calmness = cls._derive_intensity_calmness(
+                scores, payload.get("arousal")
+            )
+            attrs["intensity"] = intensity
+            attrs["calmness"] = calmness
             attrs["mood_scores"] = scores
             # mood_label (defect 3): argmax ONLY over the COMPLETE five-head
             # set (atomic rule). Deterministic tie-break via sorted order.
@@ -319,12 +432,19 @@ class BpmPipeline:
                     "AX BPM override hit for %s - %s → %.1f BPM (%s)",
                     artist, title, override["bpm"], override.get("rule"),
                 )
-                return ResolutionResult(override["bpm"], **{
+                attrs = {
                     "source": SOURCE_OVERRIDE,
                     "octave_rule": override.get("rule"),
                     "original_bpm": override.get("original_bpm"),
                     "track": f"{artist} - {title}",
-                })
+                }
+                # The same entry may also carry a mood override — merge
+                # the synthetic mood attrs so one publish carries both.
+                if override.get("mood_label"):
+                    attrs.update(
+                        self._mood_attrs_from_override(override["mood_label"])
+                    )
+                return ResolutionResult(override["bpm"], **attrs)
 
         # 1. Cache lookup — publish immediately, no network, no analysis.
         key = cache_key(None, artist, title, duration)

@@ -1,4 +1,4 @@
-"""Persistent manual BPM overrides backed by the Home Assistant Store.
+"""Persistent manual BPM + mood overrides backed by the HA Store.
 
 Separate from the BPM cache (store.py) on purpose:
 
@@ -13,11 +13,17 @@ Separate from the BPM cache (store.py) on purpose:
 - Independently clearable: clear_cache must never touch overrides and
   vice versa.
 
-Value schema (v1):
-  bpm:            corrected BPM (float, > 0)
-  rule:           "manual_half" | "manual_double"
+Value schema (v1, extended in 3.3.0 — optional fields, no migration):
+  bpm:            corrected BPM (float, > 0) — present when the BPM is
+                  overridden (manual_half / manual_double / manual_set)
+  rule:           "manual_half" | "manual_double" | "manual_set"
   original_bpm:   the BPM the correction was applied to (float)
-  created:        ISO-8601 UTC timestamp
+  mood_label:     one of the five mood heads — present when the mood is
+                  overridden; published as one-hot synthetic scores
+  created:        ISO-8601 UTC timestamp (first write for the track)
+
+One entry per track may carry a BPM override, a mood override, or both;
+async_set_bpm / async_set_mood merge into the existing entry.
 """
 
 from __future__ import annotations
@@ -30,7 +36,13 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-from .const import OVERRIDE_STORAGE_KEY, RULE_MANUAL_DOUBLE, RULE_MANUAL_HALF
+from .const import (
+    EXPECTED_MOOD_SCORES,
+    OVERRIDE_STORAGE_KEY,
+    RULE_MANUAL_DOUBLE,
+    RULE_MANUAL_HALF,
+    RULE_MANUAL_SET,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,22 +89,49 @@ class BpmOverrideStore:
         rule: str,
         original_bpm: float,
     ) -> None:
-        """Store a manual correction for this track."""
-        if rule not in (RULE_MANUAL_HALF, RULE_MANUAL_DOUBLE):
+        """Store a manual BPM correction for this track.
+
+        Merges into an existing entry so a mood override survives a
+        later BPM correction (and vice versa via async_set_mood).
+        """
+        if rule not in (RULE_MANUAL_HALF, RULE_MANUAL_DOUBLE, RULE_MANUAL_SET):
             raise ValueError(f"invalid override rule: {rule!r}")
         if not bpm or bpm <= 0:
             raise ValueError(f"override bpm must be > 0, got {bpm}")
-        entry = {
+        key = override_key(artist, title)
+        entry = self._data.get(key) or {}
+        entry.update({
             "bpm": float(bpm),
             "rule": rule,
             "original_bpm": float(original_bpm),
-            "created": datetime.now(UTC).isoformat(),
-        }
-        self._data[override_key(artist, title)] = entry
+        })
+        entry.setdefault("created", datetime.now(UTC).isoformat())
+        self._data[key] = entry
         await self._store.async_save(self._data)
         _LOGGER.info(
             "AX BPM override stored: %s - %s → %.1f BPM (%s, was %.1f)",
             artist, title, bpm, rule, original_bpm,
+        )
+
+    async def async_set_mood(
+        self, artist: str | None, title: str | None, label: str
+    ) -> None:
+        """Store a manual mood override for this track.
+
+        Merges into an existing entry so a BPM override survives a
+        later mood correction. The label is validated against the five
+        mood heads; the pipeline publishes one-hot synthetic scores.
+        """
+        if label not in EXPECTED_MOOD_SCORES:
+            raise ValueError(f"invalid mood label: {label!r}")
+        key = override_key(artist, title)
+        entry = self._data.get(key) or {}
+        entry["mood_label"] = label
+        entry.setdefault("created", datetime.now(UTC).isoformat())
+        self._data[key] = entry
+        await self._store.async_save(self._data)
+        _LOGGER.info(
+            "AX BPM mood override stored: %s - %s → %s", artist, title, label
         )
 
     async def async_remove(self, artist: str | None, title: str | None) -> bool:

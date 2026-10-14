@@ -184,6 +184,32 @@ imports it. When the add-on is unreachable, mood attributes are omitted
 and octave disambiguation degrades to genre-only — one info log, no
 retry, the BPM sensor is unaffected.
 
+### Mood entity split (3.3.0)
+
+Mood attributes live on a DEDICATED entity, `sensor.ax_bpm_mood`
+([`custom_components/ax_bpm/mood_sensor.py`](custom_components/ax_bpm/mood_sensor.py)),
+not on the BPM sensor. The split happens at PUBLISH time
+(`split_mood_attrs` in
+[`custom_components/ax_bpm/pipeline.py`](custom_components/ax_bpm/pipeline.py)):
+the cache schema and every resolution path (override / cache / Deezer /
+local) still produce mood attrs merged into the result — the BPM sensor
+partitions them on publish, keeps the BPM keys, and forwards the mood
+keys to the mood sensor via the `mood_update` hook in
+`hass.data[DOMAIN][entry_id]` (the same hook pattern as
+`refresh_sensor`). Consequences:
+
+- The BPM sensor's `extra_state_attributes` never contain
+  `mood_scores`/`mood_label`/`intensity`/`calmness`/`mood_override`.
+- The mood sensor's state is `mood_label` (one of the five heads) or
+  `unknown`; its attributes carry the mood dict + `last_updated`.
+- Lifecycle mirrors the BPM sensor: pause retains, stop/off/unavailable
+  → unknown with attributes cleared; a failed resolution pushes `None`
+  through the hook, which clears the mood entity too (defect-4 parity).
+- The mood sensor resolves NOTHING itself — no analyzer calls, no
+  Deezer lookups; it is a pure display of the pipeline's mood output.
+- Automation break-glass: `state_attr('sensor.ax_bpm', 'mood_label')`
+  from 3.2.x becomes `states('sensor.ax_bpm_mood')`.
+
 ---
 
 ## Migration & legacy notes
@@ -214,6 +240,22 @@ retry, the BPM sensor is unaffected.
   when loading a v1 file — fixed in 3.0.1.)
 - **Old cache `source: "sidecar"` strings stay valid** — the sensor
   publishes whatever the cache holds; new writes use `analyzer`.
+- **Manual overrides (3.3.0): BPM + mood in one entry** — the override
+  store (`ax_bpm_overrides`, schema v1 unchanged — the new fields are
+  optional additions to a schema-less dict, no migration) now carries
+  an optional `mood_label` alongside `bpm`/`rule`/`original_bpm`.
+  `set_bpm` stores rule `manual_set` (original_bpm == the set value);
+  `set_mood` merges into the same entry. Resolution semantics: a BPM
+  override short-circuits before the cache (unchanged); a mood-only
+  override applies POST-resolution in `async_resolve`, uniformly
+  replacing the mood attrs of cache/Deezer/local results. Synthetic
+  mood attrs are one-hot over the five heads and run through the SAME
+  `_derive_intensity_calmness` formula as the analyzer path (structural
+  parity, pinned by test). Octave gating is NOT re-run on synthetic
+  scores — disambiguation already ran on the automatic estimate; the
+  override affects published attributes only. `async_enrich` skips the
+  preview download when a mood override exists. `clear_override`
+  removes the whole per-track entry (both aspects).
 
 ---
 
