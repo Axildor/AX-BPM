@@ -6,3 +6,10 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
+    # home-assistant/builder frozen: action deprecated upstream (2026.03.0);
+    # per-arch builder images no longer published (2026.06.0+ = "manifest
+    # unknown" on ghcr.io). Unfreeze only after migrating to the composable
+    # actions in the same repo (follow-up ticket).
+    ignore:
+      - dependency-name: "home-assistant/builder"
+        versions: [">=2026.03.3"]
