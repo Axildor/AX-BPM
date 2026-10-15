@@ -174,7 +174,7 @@ jobs:
 
       - name: Upload gate numbers artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: contrastive-gate-numbers
           path: gate-numbers/contrastive_gate_numbers.json
