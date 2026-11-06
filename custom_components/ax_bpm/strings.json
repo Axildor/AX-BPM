@@ -127,6 +127,33 @@
           },
           "mood_override": {
             "name": "Mood override"
+          },
+          "mood_source": {
+            "name": "Mood source"
+          },
+          "mood_tags": {
+            "name": "Mood tags"
+          },
+          "valence": {
+            "name": "Valence"
+          },
+          "arousal": {
+            "name": "Arousal"
+          },
+          "valence_std": {
+            "name": "Valence std. dev."
+          },
+          "arousal_std": {
+            "name": "Arousal std. dev."
+          },
+          "danceability": {
+            "name": "Danceability"
+          },
+          "analyzed_seconds": {
+            "name": "Analyzed seconds"
+          },
+          "model_versions": {
+            "name": "Model versions"
           }
         }
       },

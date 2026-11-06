@@ -112,7 +112,19 @@ and mood.
   threshold). Attribute layer only, never used for gating.
 - `danceability` — degrades independently (omitted if its head is down).
 - `valence` / `arousal` (+ `valence_std` / `arousal_std`) — attribute
-  layer only.
+  layer only. **Currently always `null`**: the DEAM valence/arousal
+  regressors are deferred (v1.1), and `inference.py` publishes the keys
+  as explicit `null` placeholders so the payload shape is stable. Note
+  the consequence for `_derive_intensity_calmness`: its
+  `abs(intensity − calmness) < 0.05` arousal tie-breaker is therefore
+  unreachable in production, and the published intensity/calmness are
+  always the plain /3 and /2 head means. Keep the `null` keys rather
+  than dropping them — the mood sensor's state-attribute contracts and
+  the card's change signature both assume a stable key set.
+- `mood_source` — `"analyzer"`, marking the mood dict's provenance. It
+  is deliberately NOT called `source`: `source` is the BPM sensor's own
+  resolution source, and `split_mood_attrs()` must be able to route the
+  mood keys without stripping it from the BPM sensor.
 - `bpm` + `bpm_confidence` — aubio tempo on the 44.1 kHz preview,
   **independent** of mood atomicity: a tempo failure omits these
   without touching `mood_scores`, and vice versa. A tempo failure
@@ -198,8 +210,13 @@ keys to the mood sensor via the `mood_update` hook in
 `hass.data[DOMAIN][entry_id]` (the same hook pattern as
 `refresh_sensor`). Consequences:
 
-- The BPM sensor's `extra_state_attributes` never contain
-  `mood_scores`/`mood_label`/`intensity`/`calmness`/`mood_override`.
+- The BPM sensor's `extra_state_attributes` never contain any key in
+  `MOOD_ATTR_KEYS` — the gating five (`mood_scores`/`mood_label`/
+  `intensity`/`calmness`/`mood_override`) **and** the attribute layer
+  (`mood_source`, `mood_tags`, `valence`/`arousal` + std fields,
+  `danceability`, `analyzed_seconds`, `model_versions`). The BPM sensor
+  keeps `source` for its own resolution source; mood provenance is the
+  separate `mood_source` key.
 - The mood sensor's state is `mood_label` (one of the five heads) or
   `unknown`; its attributes carry the mood dict + `last_updated`.
 - Lifecycle mirrors the BPM sensor: pause retains, stop/off/unavailable
@@ -209,6 +226,20 @@ keys to the mood sensor via the `mood_update` hook in
   Deezer lookups; it is a pure display of the pipeline's mood output.
 - Automation break-glass: `state_attr('sensor.ax_bpm', 'mood_label')`
   from 3.2.x becomes `states('sensor.ax_bpm_mood')`.
+
+**3.3.1 — path independence.** `MOOD_ATTR_KEYS` originally listed only
+the five gating keys while `_mood_attrs_from_payload()` returned ten, and
+`async_enrich()` forwarded its raw dict through the `mood_update` hook.
+The result was path-dependent placement: the enrichment path put the
+attribute layer on the mood entity, while the local/cache path (which ran
+`split_mood_attrs`) left those keys on the BPM sensor — so
+`state_attr('sensor.ax_bpm_mood', 'danceability')` worked for one track
+and returned `None` for the next. The set now covers the complete mood
+surface and `async_enrich()` returns an already-split dict, so both paths
+hand the mood entity the same keys. The split is idempotent (pinned by
+`test_split_mood_attrs_is_path_independent_for_enrich_output`) and the
+CACHE entry is deliberately left unshortened, so re-splitting on a later
+publish is lossless.
 
 ---
 

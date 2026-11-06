@@ -245,10 +245,24 @@ When the analyzer responds (Deezer-metadata path, or the concurrent local
 path), additional attributes are published: `mood_tags` (top-N above
 threshold), `valence`, `arousal`, `valence_std`/`arousal_std`,
 `danceability`, `analyzed_seconds`, `model_versions`, and
-`source="analyzer"`. The `intensity`/`calmness` attribute names are kept
-for automation back-compat — they are now computed from the analyzer
-tags (aggressive/party/electronic vs relaxed/acoustic averages) with
-arousal as tie-breaker.
+`mood_source="analyzer"`. The `intensity`/`calmness` attribute names are
+kept for automation back-compat — they are computed from the analyzer
+heads (aggressive/party/electronic vs relaxed/acoustic averages).
+
+These attributes are published on this entity **regardless of which
+resolution path produced them** (3.3.1). Previously the attribute-layer
+data above landed on `sensor.ax_bpm` when the track was resolved locally
+or from cache, and on `sensor.ax_bpm_mood` when it came from post-publish
+enrichment — so `state_attr('sensor.ax_bpm_mood', 'danceability')` could
+work for one track and return `None` for the next. Both paths now route
+through the same split, and mood provenance is `mood_source` (the BPM
+sensor keeps `source` for its own resolution source).
+
+`valence` / `arousal` are currently always `null` — those DEAM
+regressors are deferred. The keys are published as explicit `null`
+placeholders to keep the attribute set stable; because arousal is a
+`null`, the intensity/calmness tie-breaker never fires and the published
+values are always the plain head averages.
 
 - **Pause** retains the last mood. **Stop / off** sets `unknown`.
 - Mood never delays the BPM publish: on the Deezer-metadata path it

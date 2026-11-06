@@ -6,8 +6,12 @@ only BPM-related attributes; mood lives here:
 
 - state: mood_label (aggressive/party/relaxed/electronic/acoustic) or
   unknown — never a mood_scores dict.
-- attributes: mood_scores, intensity, calmness, mood_override (when
-  user-set), last_updated.
+- attributes: the COMPLETE mood surface as routed by
+  pipeline.MOOD_ATTR_KEYS (mood_scores, mood_label, intensity, calmness,
+  mood_override, mood_source, mood_tags, valence/arousal + their std
+  fields, danceability, analyzed_seconds, model_versions), plus
+  last_updated. None-valued placeholders are dropped by
+  split_mood_attrs() before they reach this entity.
 
 Push-only (should_poll=False), driven by TWO inputs:
 
@@ -129,5 +133,5 @@ class AxBpmMoodSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        """mood_scores / intensity / calmness / mood_override."""
+        """The mood dict as routed by pipeline.MOOD_ATTR_KEYS + last_updated."""
         return self._attr_extra_state_attributes

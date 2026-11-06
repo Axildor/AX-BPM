@@ -110,7 +110,7 @@ async def test_local_path_attrs_match_enrich_path_attrs(
 
     assert result is not None
     expected = BpmPipeline._mood_attrs_from_payload(payload)
-    expected.pop("source", None)  # result-level source is set separately
+    expected.pop("mood_source", None)  # result-level source is set separately
 
     for key, value in expected.items():
         assert result.attrs[key] == value, (

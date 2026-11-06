@@ -525,7 +525,10 @@ async def test_deezer_path_post_publish_enrichment(mock_session, mock_cache):
         "Daft Punk", "Test Track", 224.0, result
     )
     assert mood_attrs is not None
-    assert mood_attrs["source"] == "analyzer"
+    # Mood provenance uses "mood_source" so the BPM sensor keeps its own
+    # "source" attribute through split_mood_attrs (3.3.1).
+    assert mood_attrs["mood_source"] == "analyzer"
+    assert "source" not in mood_attrs
     assert mood_attrs["valence"] == 0.4
     assert mood_attrs["arousal"] == 0.8
     assert mood_attrs["danceability"] == 0.7
@@ -535,7 +538,7 @@ async def test_deezer_path_post_publish_enrichment(mock_session, mock_cache):
     assert result.bpm == 123.0
     # Mood cached alongside the BPM.
     put_entry = mock_cache.async_put.await_args.args[1]
-    assert put_entry["source"] == "analyzer"
+    assert put_entry["mood_source"] == "analyzer"
     assert put_entry["bpm"] == 123.0
 
 

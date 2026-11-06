@@ -71,8 +71,29 @@ LEGACY_MOOD_FIELDS = ("mood_scores", "mood_label")
 # the BPM sensor carries only BPM-related attributes and the mood sensor
 # carries only mood ones. The cache schema is untouched — mood attrs stay
 # merged in cached entries and are split again on every publish.
+#
+# This set is the COMPLETE mood surface, not just the five gating heads
+# (3.3.1). Previously it held only mood_scores/mood_label/intensity/
+# calmness/mood_override, so the attribute-layer mood data (mood_tags,
+# valence/arousal, danceability, …) landed on a DIFFERENT entity depending
+# on which resolution path ran: the enrichment path returned the raw attr
+# dict via the mood_update hook (mood entity), while the local/cache path
+# went through split_mood_attrs and left those keys on the BPM sensor.
+# Same logical data, path-dependent placement — automations reading
+# state_attr('sensor.ax_bpm_mood', 'danceability') broke intermittently.
+#
+# "source" is deliberately ABSENT: the BPM sensor publishes its own
+# resolution source (deezer_metadata/analyzer/numpy/cache/manual_override)
+# and splitting it onto the mood entity would strip it from the BPM
+# sensor. Mood provenance uses its own key, "mood_source" (see
+# _mood_attrs_from_payload).
 MOOD_ATTR_KEYS = frozenset({
+    # five gating heads + derived scalars
     "mood_scores", "mood_label", "intensity", "calmness", "mood_override",
+    # attribute-layer analyzer mood data
+    "mood_source", "mood_tags", "valence", "arousal",
+    "valence_std", "arousal_std", "danceability",
+    "analyzed_seconds", "model_versions",
 })
 
 
@@ -309,7 +330,16 @@ class BpmPipeline:
         await self._cache.async_put(
             key, {**cached, "bpm": result.bpm, **result.attrs, **mood_attrs}
         )
-        return mood_attrs
+        # Return ONLY the mood-routed keys (3.3.1). The caller forwards this
+        # straight to the mood sensor via the mood_update hook, so without
+        # this split the enrichment path handed the mood entity keys the
+        # local/cache path leaves on the BPM sensor — identical data landing
+        # on different entities depending on which path resolved the track.
+        # split_mood_attrs is the single source of truth for that boundary;
+        # the cache above deliberately keeps the UNSHORTENED entry so the
+        # cache schema is path-independent too.
+        _bpm_side, mood_side = split_mood_attrs(mood_attrs)
+        return mood_side
 
     @staticmethod
     def _scores_from_tags(payload: dict[str, Any] | None) -> dict[str, float] | None:
@@ -379,6 +409,13 @@ class BpmPipeline:
         fallback (the designed degradation path), never 0.0 substitution.
         """
         attrs: dict[str, Any] = {
+            # Mood provenance uses its OWN key ("mood_source"), not "source":
+            # "source" is the BPM resolution source published by the BPM
+            # sensor (deezer_metadata/analyzer/numpy/cache/manual_override).
+            # Sharing the key made split_mood_attrs() unable to route it —
+            # including "source" in MOOD_ATTR_KEYS would strip it from the
+            # BPM sensor. See the MOOD_ATTR_KEYS comment.
+            "mood_source": "analyzer",
             "mood_tags": payload.get("mood_tags") or [],
             "valence": payload.get("valence"),
             "arousal": payload.get("arousal"),
@@ -387,7 +424,6 @@ class BpmPipeline:
             "danceability": payload.get("danceability"),
             "analyzed_seconds": payload.get("analyzed_seconds"),
             "model_versions": payload.get("model_versions"),
-            "source": "analyzer",
         }
         # Explicit five-signal dict from the dedicated mood heads — the
         # analyzer emits it only when ALL five heads are healthy.
@@ -714,7 +750,7 @@ class BpmPipeline:
                 if mood_payload
                 else {}
             )
-            mood_attrs.pop("source", None)  # result-level source set below
+            mood_attrs.pop("mood_source", None)  # result-level source set below
             source = (
                 SOURCE_ANALYZER
                 if mood_payload is not None and mood_payload.get("bpm")

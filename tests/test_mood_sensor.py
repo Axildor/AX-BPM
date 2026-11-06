@@ -118,6 +118,62 @@ def test_split_mood_attrs_empty():
     assert split_mood_attrs({}) == ({}, {})
 
 
+def test_split_mood_attrs_covers_whole_mood_surface():
+    """3.3.1: the attribute-layer mood data routes to the mood entity too.
+
+    Before 3.3.1 MOOD_ATTR_KEYS held only the five gating keys, so the
+    analyzer's attribute-layer payload (mood_tags, valence/arousal,
+    danceability, …) stayed on the BPM sensor on the local/cache path but
+    reached the mood entity on the enrichment path. Same data, different
+    entity depending on which path resolved the track.
+    """
+    attrs = {
+        # BPM-side keys — must stay on the BPM sensor.
+        "source": "analyzer", "isrc": "X", "bpm_raw": 128.0, "bpm_engine": "aubio",
+        # Mood-side attribute layer.
+        "mood_source": "analyzer",
+        "mood_tags": [{"tag": "party", "score": 0.9}],
+        "valence": 0.4, "arousal": 0.8,
+        "valence_std": None, "arousal_std": None,
+        "danceability": 0.7, "analyzed_seconds": 30.0,
+        "model_versions": {"effnet": "1"},
+    }
+    bpm, mood = split_mood_attrs(attrs)
+    # "source" is the BPM resolution source and MUST NOT move: the mood
+    # entity has its own "mood_source" key instead.
+    assert bpm["source"] == "analyzer"
+    assert "source" not in mood
+    assert bpm["bpm_engine"] == "aubio"
+    assert set(mood) == {
+        "mood_source", "mood_tags", "valence", "arousal", "danceability",
+        "analyzed_seconds", "model_versions",
+    }
+    # None-valued placeholders are still dropped (valence_std/arousal_std).
+    assert "valence_std" not in mood
+    assert "arousal_std" not in mood
+
+
+def test_split_mood_attrs_is_path_independent_for_enrich_output():
+    """The enrichment return value survives split_mood_attrs unchanged.
+
+    async_enrich already routes its result through split_mood_attrs, so a
+    second split (as the sensor does on the local/cache path) must be a
+    no-op. This pins both halves of the contract: enrichment returns only
+    mood keys, and re-splitting never steals a BPM-side key.
+    """
+    enrich_output = {
+        "mood_source": "analyzer",
+        "mood_scores": {"aggressive": 0.1},
+        "mood_label": "relaxed",
+        "intensity": 0.3,
+        "calmness": 0.7,
+        "danceability": 0.6,
+    }
+    bpm, mood = split_mood_attrs(enrich_output)
+    assert bpm == {}, "enrichment output must contain no BPM-side keys"
+    assert mood == enrich_output, "re-splitting must be lossless"
+
+
 # ---------------------------------------------------------------------------
 # AxBpmMoodSensor — hook + state mirror
 # ---------------------------------------------------------------------------
