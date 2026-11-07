@@ -233,6 +233,33 @@ and the last update time.
 
 - **Pause** retains the last value. **Stop / off** sets `unknown`.
 
+### Track changes and stale values
+
+The sensor tracks what is playing using `media_content_id` **plus**
+artist/title/duration. When the player starts a new track, the current
+value is held for **5 seconds** while the new track resolves, so you don't
+see a flash of `unknown` between songs. If nothing has resolved after
+those 5 seconds, the entity goes `unknown` — the AXiDOS Avatar Card reads
+`unknown` as 120 BPM, so the avatar keeps dancing normally until the new
+value arrives.
+
+Two extra safeguards keep a value from outliving its track:
+
+- **Restart detection.** Some players reuse one title (and even one
+  content id) for every track in a queue. A playback position that jumps
+  back to near zero well into a track counts as a new track, so it resolves
+  again instead of holding the previous BPM.
+- **Duration watchdog.** A published value is cleared at
+  `media_duration + 15 s` if the same track is still reported. This is what
+  prevents one song's BPM from being shown for an entire album when the
+  player reports no metadata changes at all. It only arms when the player
+  exposes a track duration — a live stream with no duration keeps its BPM,
+  because there is no "expected end" to measure against.
+
+`unknown` is a deliberate value: the integration never publishes a
+fabricated number, so long-term statistics stay meaningful. The 120 BPM
+fallback belongs to the card, not the sensor.
+
 ## Mood sensor
 
 `sensor.ax_bpm_mood` — state is the mood label of the current track:
@@ -267,6 +294,10 @@ values are always the plain head averages.
 - **Pause** retains the last mood. **Stop / off** sets `unknown`.
 - Mood never delays the BPM publish: on the Deezer-metadata path it
   arrives as a second update after the BPM is published.
+- **On a track change the mood clears immediately**, unlike the BPM value
+  which is held for 5 seconds. A stale BPM is just a plausible number, but
+  a stale mood actively steers the dance style — so the new track starts
+  neutral rather than dancing to the previous track's mood.
 
 > **Migrating from 3.2.x:** mood attributes (`mood_scores`, `mood_label`,
 > `intensity`, `calmness`, `mood_override`) no longer appear on

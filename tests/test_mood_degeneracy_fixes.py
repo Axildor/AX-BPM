@@ -45,7 +45,9 @@ def mock_session():
 def mock_cache():
     cache = MagicMock(spec=BpmCache)
     cache.get = MagicMock(return_value=None)
+    cache.get_first = MagicMock(return_value=None)
     cache.async_put = AsyncMock()
+    cache.async_put_many = AsyncMock()
     return cache
 
 
@@ -204,8 +206,13 @@ async def test_sensor_unknown_clears_stale_attributes():
     sensor._media_player_id = "media_player.test"
     sensor._pipeline = pipeline
     sensor._debounce_unsub = None
-    sensor._resolving_track = None
-    sensor._last_track_id = None
+    sensor._grace_unsub = None
+    sensor._watchdog_unsub = None
+    sensor._generation = 0
+    sensor._published_generation = -1
+    sensor._resolving_generation = None
+    sensor._last_track = None
+    sensor._last_position = None
     sensor.async_write_ha_state = MagicMock()  # HA entity method (stubbed)
     # Simulate the stale attributes a PREVIOUS successful track left.
     sensor._attr_native_value = 120.0

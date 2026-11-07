@@ -1,9 +1,38 @@
 """AX BPM sensor entity.
 
 Push-only (should_poll=False): reacts to media_player state changes.
+
 - state: final BPM (float), unit "BPM", state_class "measurement"
 - pause: retain last value; stop/off/unavailable: unknown
 - failure: unknown — NEVER publish 0
+
+Track identity (stale-BPM fix)
+-----------------------------
+Track changes are detected via `media.track_identity()`, which combines
+`media_content_id` with the artist/title/duration tuple. A player that
+reports the same metadata for consecutive tracks no longer freezes the
+sensor — and because the same identity feeds the generation guard below,
+a slow resolution from an earlier track can never publish under a later
+one (previously a tuple-equality check that compared EQUAL and let it
+through).
+
+Two timers back the identity up:
+
+- PUBLISH_GRACE (5 s): after a genuine change the entity HOLDS the
+  previous track's value, then clears to `unknown` if nothing published
+  for the new track. The consumer (AXiDOS card, `parseBpm`) derives 120
+  from `unknown`, so the dance never stalls — and the integration never
+  fabricates a numeric state, which would pollute long-term statistics
+  and contradict the documented "failure is unknown, never 0" contract.
+- WATCHDOG (media_duration + WATCHDOG_GRACE): fires when the expected
+  track end has passed while the SAME identity is still reported. This is
+  the only signal available when a source never changes ANY attribute —
+  the exact "whole album shows track 1's BPM" failure. Arming requires a
+  positive `media_duration`; a live stream with no duration keeps its
+  BPM, because "should have ended" is unknowable there.
+
+A LATE resolution still publishes: the grace timer only makes the entity
+honest in the interim, it does not cancel the in-flight resolve.
 
 BPM publishes first (unchanged path). On the Deezer-metadata path the
 sensor then triggers the pipeline's post-publish mood enrichment; when
@@ -38,8 +67,16 @@ from .const import (
     CONF_MEDIA_PLAYER,
     DOMAIN,
     NAME,
+    PUBLISH_GRACE,
     TRACK_DEBOUNCE,
     UNIT_BPM,
+    WATCHDOG_GRACE,
+)
+from .media import (
+    looks_restarted,
+    media_duration,
+    media_position,
+    track_identity,
 )
 from .mood_sensor import AxBpmMoodSensor
 from .pipeline import BpmPipeline, split_mood_attrs
@@ -87,8 +124,21 @@ class AxBpmSensor(SensorEntity):
         self._attr_native_value = None  # unknown until first track resolves
         self._attr_extra_state_attributes: dict = {}
         self._last_track: tuple | None = None
-        self._resolving_track: tuple | None = None
+        self._last_position: float | None = None
+        # Monotonic generation: bumped on EVERY identity change (and on
+        # every forced clear). It replaces tuple-equality for "is this
+        # result still for the current track?" — tuple equality answered
+        # "yes" for consecutive tracks with identical metadata and let a
+        # stale result publish.
+        self._generation = 0
+        # Generation the currently published value belongs to. When the
+        # grace timer fires and this differs from _generation, nothing has
+        # published for the current track yet → clear to unknown.
+        self._published_generation = -1
+        self._resolving_generation: int | None = None
         self._debounce_unsub = None
+        self._grace_unsub = None
+        self._watchdog_unsub = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -100,11 +150,7 @@ class AxBpmSensor(SensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to the media player."""
-        self.async_on_remove(
-            async_track_state_change_event(
-                self.hass, [self._media_player_id], self._on_media_change
-            )
-        )
+        self.async_on_remove(async_track_state_change_event(self.hass, [self._media_player_id], self._on_media_change))
         # Service hooks (services.py): immediate re-resolve after a
         # halve/double/clear mutation, and a getter for the currently
         # published BPM (the value a correction applies to).
@@ -115,6 +161,12 @@ class AxBpmSensor(SensorEntity):
         entry_data = self.hass.data[DOMAIN][self._entry.entry_id]
         entry_data["refresh_sensor"] = self._refresh_now
         entry_data["get_sensor_bpm"] = self._get_published_bpm
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel every pending timer (no callbacks after removal)."""
+        self._cancel_debounce()
+        self._cancel_grace()
+        self._cancel_watchdog()
 
     @callback
     def _refresh_now(self) -> None:
@@ -127,15 +179,136 @@ class AxBpmSensor(SensorEntity):
         state = self.hass.states.get(self._media_player_id)
         if state is None or state.state != STATE_PLAYING:
             return
-        # Force the next resolution to run even if the track tuple is
-        # unchanged (the store changed, not the track).
+        # Force the next resolution to run even if the track identity is
+        # unchanged (the store changed, not the track). The generation is
+        # NOT bumped: this is the same track, so the result is still valid
+        # for it and must not be discarded by the generation guard.
         self._last_track = None
+        self._published_generation = -1
         self._cancel_debounce()
+        self._cancel_grace()
         self.hass.async_create_task(self._async_resolve())
 
     def _get_published_bpm(self) -> float | None:
         """The currently published BPM (None when unknown)."""
         return self._attr_native_value
+
+    # ------------------------------------------------------------------
+    # Timers
+    # ------------------------------------------------------------------
+
+    def _cancel_debounce(self) -> None:
+        if self._debounce_unsub:
+            self._debounce_unsub()
+            self._debounce_unsub = None
+
+    def _cancel_grace(self) -> None:
+        if self._grace_unsub:
+            self._grace_unsub()
+            self._grace_unsub = None
+
+    def _cancel_watchdog(self) -> None:
+        if self._watchdog_unsub:
+            self._watchdog_unsub()
+            self._watchdog_unsub = None
+
+    def _arm_grace(self) -> None:
+        """Hold the previous value, then clear to unknown if nothing lands.
+
+        PUBLISH_GRACE is deliberately shorter than a worst-case resolution
+        (OVERALL_BUDGET + TRACK_DEBOUNCE). A resolution that finishes
+        after the grace still publishes normally — the timer only governs
+        the INTERIM state, so a slow-but-successful track shows unknown
+        briefly instead of another track's BPM.
+        """
+        self._cancel_grace()
+        generation = self._generation
+        self._grace_unsub = async_call_later(
+            self.hass,
+            PUBLISH_GRACE,
+            lambda _now: self._on_grace_expired(generation),
+        )
+
+    @callback
+    def _on_grace_expired(self, generation: int) -> None:
+        self._grace_unsub = None
+        # A newer track superseded this grace window — its own timer owns
+        # the entity now.
+        if generation != self._generation:
+            return
+        # A publish already landed for this generation → nothing to clear.
+        if self._published_generation == generation:
+            return
+        if self._attr_native_value is None:
+            return
+        _LOGGER.info(
+            "AX BPM: no resolution for the current track after %.0fs — "
+            "clearing to unknown (the card derives 120 until it resolves)",
+            PUBLISH_GRACE,
+        )
+        self._clear_to_unknown()
+
+    def _arm_watchdog(self) -> None:
+        """Clear a value that outlived the track it belongs to.
+
+        Armed per successful publish at `media_duration + WATCHDOG_GRACE`.
+        This is the ONLY mechanism that can catch a source which never
+        changes any attribute: the identity never moves, so no debounce
+        ever fires, and without this the previous track's BPM would sit
+        there for the whole album.
+
+        Not armed when the duration is unknown (live streams).
+        """
+        self._cancel_watchdog()
+        state = self.hass.states.get(self._media_player_id)
+        duration = media_duration(state)
+        if duration is None:
+            return  # no expected end → holding the value is correct
+        position = media_position(state) or 0.0
+        delay = max(0.0, duration - position) + WATCHDOG_GRACE
+        generation = self._generation
+        self._watchdog_unsub = async_call_later(
+            self.hass,
+            delay,
+            lambda _now: self._on_watchdog_expired(generation),
+        )
+
+    @callback
+    def _on_watchdog_expired(self, generation: int) -> None:
+        self._watchdog_unsub = None
+        state = self.hass.states.get(self._media_player_id)
+        # Paused / stopped: "should have ended" is meaningless while the
+        # position is frozen. The off/unknown handler owns that case.
+        if state is None or state.state != STATE_PLAYING:
+            return
+        # A different track is playing now; its own publish re-armed this.
+        if generation != self._generation:
+            return
+        _LOGGER.info(
+            "AX BPM: track outlived its expected duration (%.0f BPM held) — "
+            "clearing to unknown until the player reports a new track",
+            self._attr_native_value or 0.0,
+        )
+        self._clear_to_unknown()
+
+    # ------------------------------------------------------------------
+    # State transitions
+    # ------------------------------------------------------------------
+
+    @callback
+    def _clear_to_unknown(self) -> None:
+        """Publish unknown with per-track attributes cleared.
+
+        Deliberately does NOT touch `_last_track`: clearing it made every
+        subsequent attribute update (volume, position, …) re-trigger a
+        full resolution — the request storm documented in
+        `_async_resolve_track`. The generation already prevents a stale
+        result from republishing.
+        """
+        self._attr_native_value = None
+        self._attr_extra_state_attributes = {}
+        self._push_mood(None)
+        self.async_write_ha_state()
 
     @callback
     def _on_media_change(self, event) -> None:
@@ -148,31 +321,51 @@ class AxBpmSensor(SensorEntity):
         # Stop / off / unavailable → unknown (both entities).
         if state in (STATE_OFF, "unavailable", "unknown"):
             self._cancel_debounce()
+            self._cancel_grace()
+            self._cancel_watchdog()
             self._attr_native_value = None
             self._last_track = None
+            self._published_generation = -1
             self._push_mood(None)
             self.async_write_ha_state()
             return
 
-        # Pause → retain last value.
+        # Pause → retain last value. The position stops advancing, so a
+        # pending watchdog would fire on a frozen clock — cancel it and
+        # re-arm on resume (the next playing event re-arms via publish).
         if state != STATE_PLAYING:
             self._cancel_debounce()
+            self._cancel_watchdog()
             return
 
-        artist = new_state.attributes.get("media_artist")
-        title = new_state.attributes.get("media_title")
-        duration = new_state.attributes.get("media_duration")
-        track_id = (artist, title, duration)
+        identity = track_identity(new_state)
+        position = media_position(new_state)
 
-        if track_id == self._last_track:
+        # Same metadata, but playback clearly started over → the source
+        # recycles ids/metadata across tracks (the album bug). Treat it as
+        # a genuine change so the resolution runs and the new track can
+        # publish its own value.
+        restarted = looks_restarted(self._last_position, position)
+        self._last_position = position
+
+        if identity == self._last_track and not restarted:
             return
-        self._last_track = track_id
+
+        self._last_track = identity
+        self._generation += 1
+        _LOGGER.debug(
+            "AX BPM: track identity changed (generation %d, restarted=%s)",
+            self._generation,
+            restarted,
+        )
+
+        # Hold the previous value for PUBLISH_GRACE so a normal 3–5 s
+        # resolution never flashes unknown between songs.
+        self._arm_grace()
 
         # Debounce a few seconds after playback starts / track changes.
         self._cancel_debounce()
-        self._debounce_unsub = async_call_later(
-            self.hass, TRACK_DEBOUNCE, self._async_resolve_track
-        )
+        self._debounce_unsub = async_call_later(self.hass, TRACK_DEBOUNCE, self._async_resolve_track)
 
     @callback
     def _async_resolve_track(self, _now) -> None:
@@ -181,13 +374,8 @@ class AxBpmSensor(SensorEntity):
         # made every subsequent attribute update (volume, position, …)
         # re-trigger a full Deezer resolution for a failing track — a
         # request storm. Late-settling metadata still re-triggers naturally
-        # because the (artist, title, duration) tuple changes.
+        # because the track identity changes.
         self.hass.async_create_task(self._async_resolve())
-
-    def _cancel_debounce(self) -> None:
-        if self._debounce_unsub:
-            self._debounce_unsub()
-            self._debounce_unsub = None
 
     async def _async_resolve(self) -> None:
         state = self.hass.states.get(self._media_player_id)
@@ -196,22 +384,27 @@ class AxBpmSensor(SensorEntity):
         artist = state.attributes.get("media_artist")
         title = state.attributes.get("media_title")
         duration = state.attributes.get("media_duration")
-        track_id = (artist, title, duration)
-        self._resolving_track = track_id
+        generation = self._generation
+        self._resolving_generation = generation
 
         try:
-            result = await self._pipeline.async_resolve(
-                artist, title, duration
-            )
+            result = await self._pipeline.async_resolve(artist, title, duration)
         except Exception:
             _LOGGER.exception("AX BPM resolution failed")
             result = None
 
         # The track changed while resolving → discard the stale result.
-        # The new track's own resolution will publish instead.
-        if self._resolving_track != self._current_track_id():
+        # Compared by GENERATION, not by identity: two consecutive tracks
+        # with identical metadata compared equal and let the old result
+        # publish under the new track.
+        if generation != self._generation:
+            _LOGGER.debug(
+                "AX BPM: discarding result for generation %d (current %d)",
+                generation,
+                self._generation,
+            )
             return
-        self._resolving_track = None
+        self._resolving_generation = None
 
         if result is None:
             # Failure → unknown, NEVER 0. Retries on the next real track
@@ -220,6 +413,7 @@ class AxBpmSensor(SensorEntity):
             # mood_label, isrc, bpm_raw, …) must NOT survive on an
             # unknown state — clear them so the entity never presents
             # stale valid-looking metadata alongside unknown.
+            self._cancel_grace()  # this resolution has spoken
             self._attr_native_value = None
             self._attr_extra_state_attributes = {}
             self._push_mood(None)
@@ -237,6 +431,9 @@ class AxBpmSensor(SensorEntity):
             **bpm_attrs,
             "last_updated": datetime.now(UTC).isoformat(),
         }
+        self._published_generation = generation
+        self._cancel_grace()
+        self._arm_watchdog()
         self._push_mood(mood_attrs)
         self.async_write_ha_state()
 
@@ -245,16 +442,14 @@ class AxBpmSensor(SensorEntity):
         # adds the mood attributes when the analyzer responds. Never
         # delays or blocks the BPM publish above.
         try:
-            enrich_attrs = await self._pipeline.async_enrich(
-                artist, title, duration, result
-            )
+            enrich_attrs = await self._pipeline.async_enrich(artist, title, duration, result)
         except Exception:
             _LOGGER.debug("AX BPM mood enrichment failed", exc_info=True)
             enrich_attrs = None
         if not enrich_attrs:
             return
         # The track changed while enriching → discard the stale mood.
-        if self._current_track_id() != track_id:
+        if generation != self._generation:
             return
         self._push_mood(enrich_attrs)
         self.async_write_ha_state()
@@ -275,13 +470,3 @@ class AxBpmSensor(SensorEntity):
         mood_update = entry_data.get("mood_update")
         if mood_update:
             mood_update(mood_attrs)
-
-    def _current_track_id(self) -> tuple | None:
-        state = self.hass.states.get(self._media_player_id)
-        if state is None:
-            return None
-        return (
-            state.attributes.get("media_artist"),
-            state.attributes.get("media_title"),
-            state.attributes.get("media_duration"),
-        )

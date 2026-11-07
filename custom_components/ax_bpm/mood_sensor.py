@@ -23,6 +23,19 @@ Push-only (should_poll=False), driven by TWO inputs:
    stop/off/unavailable → unknown with attributes CLEARED; pause →
    retain the last mood (a paused track's mood is still valid).
 
+Track change (stale-mood fix)
+-----------------------------
+On a genuine identity change the mood clears IMMEDIATELY, unlike the BPM
+sensor which holds its value for PUBLISH_GRACE. The asymmetry is
+deliberate:
+
+- A stale BPM is a plausible number and the consumer already substitutes
+  120 from unknown, so holding briefly avoids a visible flash.
+- A stale MOOD actively steers the dance style (tierShift/energyBias/
+  lidFloor in the card), so holding it would animate the NEW track with
+  the OLD track's character. `unknown` parses to a neutral mood, which
+  is the correct interim directive.
+
 The mood sensor never resolves anything itself — no analyzer calls, no
 Deezer lookups. It is a pure display of the pipeline's mood output.
 """
@@ -33,13 +46,14 @@ import logging
 from datetime import UTC, datetime
 
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.const import STATE_OFF
+from homeassistant.const import STATE_OFF, STATE_PLAYING
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import DOMAIN, NAME
+from .media import looks_restarted, media_position, track_identity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,6 +86,8 @@ class AxBpmMoodSensor(SensorEntity):
         self._attr_unique_id = f"{entry.entry_id}_mood"
         self._attr_native_value = None  # unknown until the first mood push
         self._attr_extra_state_attributes: dict = {}
+        self._last_track: tuple | None = None
+        self._last_position: float | None = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -83,11 +99,7 @@ class AxBpmMoodSensor(SensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to the media player + register the push hook."""
-        self.async_on_remove(
-            async_track_state_change_event(
-                self.hass, [self._media_player_id], self._on_media_change
-            )
-        )
+        self.async_on_remove(async_track_state_change_event(self.hass, [self._media_player_id], self._on_media_change))
         # The BPM sensor pushes mood attrs here after every resolution.
         # Same hass.data[DOMAIN][entry_id] dict the BPM sensor's hooks
         # live in — indexing hass.data directly with the entry_id raised
@@ -123,13 +135,35 @@ class AxBpmMoodSensor(SensorEntity):
 
         # Stop / off / unavailable → unknown, attributes cleared.
         if state in (STATE_OFF, "unavailable", "unknown"):
+            self._last_track = None
+            self._last_position = None
             self._attr_native_value = None
             self._attr_extra_state_attributes = {}
             self.async_write_ha_state()
             return
 
-        # Pause → retain the last mood (mirrors the BPM sensor).
-        # Playing → nothing: the mood arrives via the mood_update hook.
+        # Pause → retain the last mood (mirrors the BPM sensor), and reset
+        # the restart tracking so a resume is not mistaken for a new track.
+        if state != STATE_PLAYING:
+            return
+
+        identity = track_identity(new_state)
+        position = media_position(new_state)
+        restarted = looks_restarted(self._last_position, position)
+        self._last_position = position
+
+        if identity == self._last_track and not restarted:
+            return
+        self._last_track = identity
+
+        # New track → drop the previous track's mood NOW. A stale mood
+        # steers the card's dance style (tierShift/energyBias/lidFloor), so
+        # unlike the BPM value it must not be held. unknown parses to a
+        # neutral mood until the BPM sensor pushes the new track's data.
+        if self._attr_native_value is not None:
+            self._attr_native_value = None
+            self._attr_extra_state_attributes = {}
+            self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self) -> dict:

@@ -39,7 +39,9 @@ def mock_session():
 def mock_cache():
     cache = MagicMock(spec=BpmCache)
     cache.get = MagicMock(return_value=None)
+    cache.get_first = MagicMock(return_value=None)
     cache.async_put = AsyncMock()
+    cache.async_put_many = AsyncMock()
     return cache
 
 
@@ -139,8 +141,11 @@ async def test_pipeline_local_path_sets_bpm_engine_aubio(
         "preview_url": "https://example.com/p.mp3",
         "genres": [],
     }
+    # Signature is now (artist, title, duration, deadline, match) — the
+    # positional `key` parameter was removed by the dual-key cache fix (the
+    # pipeline derives every key from cache_keys() instead).
     result = await pipeline._resolve_local(
-        "White Town", "Your Woman", 240.0, "isrc:GBDUW0000059", 1e9, match
+        "White Town", "Your Woman", 240.0, 1e9, match
     )
     assert result is not None
     assert result.attrs["bpm_engine"] == "aubio"
@@ -185,7 +190,7 @@ async def test_pipeline_local_path_sets_bpm_engine_numpy(
         "genres": [],
     }
     result = await pipeline._resolve_local(
-        "White Town", "Your Woman", 240.0, "isrc:GBDUW0000059", 1e9, match
+        "White Town", "Your Woman", 240.0, 1e9, match
     )
     assert result is not None
     assert result.attrs["bpm_engine"] == "numpy"

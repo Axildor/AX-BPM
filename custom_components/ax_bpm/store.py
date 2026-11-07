@@ -104,6 +104,39 @@ def cache_key(
     return "hash:" + hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
+def cache_keys(
+    isrc: str | None,
+    artist: str | None,
+    title: str | None,
+    duration: float | None,
+) -> list[str]:
+    """Every key a track's entry is readable under — ISRC first, hash last.
+
+    Dual-key fix: the resolution pipeline looks a track up BEFORE it knows
+    the ISRC (the lookup is what discovers it), so a pre-match read can
+    only use the artist|title|duration hash. Writing under the ISRC key
+    alone therefore made Deezer-sourced entries WRITE-ONLY — every replay
+    paid the full search + track + album network round trip instead of a
+    cache hit.
+
+    Two keys, two distinct jobs:
+    - ISRC key: duration-stable (survives a ±3 s metadata drift), so it is
+      the one that should win when a later resolution has learned the ISRC.
+    - Hash key: the only key available pre-match, so it must exist for the
+      fast path to work at all.
+
+    The ISRC key is omitted when the ISRC is unknown (a `hash:` key is
+    already the unambiguous identity in that case).
+    """
+    keys: list[str] = []
+    if isrc:
+        keys.append(cache_key(isrc, artist, title, duration))
+    hash_key = cache_key(None, artist, title, duration)
+    if hash_key not in keys:
+        keys.append(hash_key)
+    return keys
+
+
 class BpmCache:
     """Async wrapper around a HA Store dict of cache_key → result dict."""
 
@@ -120,9 +153,7 @@ class BpmCache:
         # v2 bump, but sweep legacy fields here too in case a v2 file
         # somehow still contains them.
         if strip_legacy_mood_fields(data):
-            _LOGGER.info(
-                "AX BPM cache: legacy SVM mood fields dropped on load (v1 → v2)"
-            )
+            _LOGGER.info("AX BPM cache: legacy SVM mood fields dropped on load (v1 → v2)")
         self._data = dict(data)
 
     def get(self, key: str) -> dict[str, Any] | None:
@@ -144,11 +175,42 @@ class BpmCache:
         result["source"] = SOURCE_CACHE
         return result
 
+    def get_first(self, keys: list[str]) -> dict[str, Any] | None:
+        """Return the first entry that exists among `keys` (order matters).
+
+        Dual-key read: callers pass cache_keys() output (ISRC key first,
+        hash key last) so a duration-stable ISRC entry wins over a hash
+        entry that a ±3 s metadata drift may have orphaned. Staleness rules
+        are identical to get() — delegate rather than duplicate them.
+        """
+        for key in keys:
+            entry = self.get(key)
+            if entry:
+                return entry
+        return None
+
     async def async_put(self, key: str, result: dict[str, Any]) -> None:
         """Store a resolution result (without the volatile preview URL)."""
         entry = {k: v for k, v in result.items() if k != "preview_url"}
         entry["payload_version"] = CACHE_PAYLOAD_VERSION
         self._data[key] = entry
+        await self._store.async_save(self._data)
+
+    async def async_put_many(self, keys: list[str], result: dict[str, Any]) -> None:
+        """Store the SAME result under every key in `keys` in one save.
+
+        Dual-key write: the pre-match lookup can only use the hash key, so
+        an ISRC-derived entry must ALSO live under the hash key to be
+        readable on the next replay. One async_save for all keys — the
+        Store writes the whole dict anyway, so N separate puts would do N
+        full file writes.
+        """
+        if not keys:
+            return
+        entry = {k: v for k, v in result.items() if k != "preview_url"}
+        entry["payload_version"] = CACHE_PAYLOAD_VERSION
+        for key in keys:
+            self._data[key] = dict(entry)
         await self._store.async_save(self._data)
 
     async def async_clear(self) -> int:

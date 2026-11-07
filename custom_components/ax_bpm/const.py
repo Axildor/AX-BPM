@@ -54,31 +54,62 @@ T_APPLY = 0.6
 T_CALM = 0.6
 
 # Deezer album genres that indicate the true tempo is 2x a low raw reading.
-FAST_GENRES = frozenset({
-    "drum & bass", "drum and bass", "dnb", "jungle", "neurofunk",
-    "hardcore", "gabber", "happy hardcore", "breakcore", "speedcore",
-})
+FAST_GENRES = frozenset(
+    {
+        "drum & bass",
+        "drum and bass",
+        "dnb",
+        "jungle",
+        "neurofunk",
+        "hardcore",
+        "gabber",
+        "happy hardcore",
+        "breakcore",
+        "speedcore",
+    }
+)
 
 # Deezer album genres that indicate the true tempo is half a high raw reading.
-SLOW_GENRES = frozenset({
-    "ballad", "ambient", "downtempo", "chillout", "acoustic",
-    "lullaby", "new age",
-})
+SLOW_GENRES = frozenset(
+    {
+        "ballad",
+        "ambient",
+        "downtempo",
+        "chillout",
+        "acoustic",
+        "lullaby",
+        "new age",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Timeouts / budgets (seconds)
 # ---------------------------------------------------------------------------
-NETWORK_TIMEOUT = 10.0        # per Deezer HTTP request
-ANALYSIS_TIMEOUT = 15.0       # per local analyzer (NumPy floor)
+NETWORK_TIMEOUT = 10.0  # per Deezer HTTP request
+ANALYSIS_TIMEOUT = 15.0  # per local analyzer (NumPy floor)
 # Per analyzer request (hard, single attempt). 25 s: aarch64 inference
 # can exceed 8 s; mood is fully async post-publish on the Deezer path, and
 # the local path stays bounded by OVERALL_BUDGET.
 ANALYZER_TIMEOUT = 25.0
-OVERALL_BUDGET = 25.0         # whole per-track resolution budget
+OVERALL_BUDGET = 25.0  # whole per-track resolution budget
 
 # Track-change debounce: wait this long after playback starts / track changes
 # before resolving, so players settle their metadata.
 TRACK_DEBOUNCE = 3.0
+
+# Publish grace (stale-BPM fix): after a genuine track change the entity
+# HOLDS the previous track's value for this long to avoid flashing unknown
+# between songs. If no resolution has published for the NEW track by then,
+# the entity clears to unknown (the consuming card derives 120 from that —
+# parseBpm). Deliberately SHORTER than a slow resolution's worst case is
+# acceptable: a late result still publishes when its generation matches.
+PUBLISH_GRACE = 5.0
+
+# Stale watchdog slack (stale-BPM fix): armed per publish, fires at
+# media_position/duration + this grace. Only armed when media_duration is
+# a positive number — a live stream with no duration may legitimately hold
+# its BPM indefinitely, so "should have ended" is unknowable there.
+WATCHDOG_GRACE = 15.0
 
 # Candidate duration tolerance for Deezer matching (seconds). Hard filter
 # when media_duration is available.
@@ -129,9 +160,15 @@ CONF_ANALYZER_API_TOKEN = "analyzer_api_token"
 # exactly this set: consumed only when present AND complete — a missing
 # key read as 0.0 would mean "maximally non-X" and bias octave gating
 # toward intensity during partial failure. Incomplete → genre-only.
-EXPECTED_MOOD_SCORES = frozenset({
-    "aggressive", "party", "relaxed", "electronic", "acoustic",
-})
+EXPECTED_MOOD_SCORES = frozenset(
+    {
+        "aggressive",
+        "party",
+        "relaxed",
+        "electronic",
+        "acoustic",
+    }
+)
 
 # The five mood heads as an ordered list for the set_mood service
 # selector. Sorted for deterministic ordering across restarts.

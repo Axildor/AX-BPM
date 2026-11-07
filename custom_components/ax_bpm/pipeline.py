@@ -59,7 +59,7 @@ from .const import (
 from .deezer import DeezerClient, parse_artist_title
 from .itunes import ItunesClient, preview_suffix
 from .overrides import BpmOverrideStore
-from .store import BpmCache, cache_key
+from .store import BpmCache, cache_keys
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,14 +87,26 @@ LEGACY_MOOD_FIELDS = ("mood_scores", "mood_label")
 # and splitting it onto the mood entity would strip it from the BPM
 # sensor. Mood provenance uses its own key, "mood_source" (see
 # _mood_attrs_from_payload).
-MOOD_ATTR_KEYS = frozenset({
-    # five gating heads + derived scalars
-    "mood_scores", "mood_label", "intensity", "calmness", "mood_override",
-    # attribute-layer analyzer mood data
-    "mood_source", "mood_tags", "valence", "arousal",
-    "valence_std", "arousal_std", "danceability",
-    "analyzed_seconds", "model_versions",
-})
+MOOD_ATTR_KEYS = frozenset(
+    {
+        # five gating heads + derived scalars
+        "mood_scores",
+        "mood_label",
+        "intensity",
+        "calmness",
+        "mood_override",
+        # attribute-layer analyzer mood data
+        "mood_source",
+        "mood_tags",
+        "valence",
+        "arousal",
+        "valence_std",
+        "arousal_std",
+        "danceability",
+        "analyzed_seconds",
+        "model_versions",
+    }
+)
 
 
 def split_mood_attrs(attrs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -156,14 +168,9 @@ class BpmPipeline:
     async def async_setup(self) -> None:
         """Probe analyzer availability (never blocks the sensor)."""
         if self._octave_mode == OCTAVE_GENRE_MOOD:
-            self._mood_ready = (
-                await self._analyzer_client.async_detect() is not None
-            )
+            self._mood_ready = await self._analyzer_client.async_detect() is not None
             if not self._mood_ready:
-                _LOGGER.info(
-                    "Analyzer not detected — falling back to genre-only "
-                    "octave disambiguation"
-                )
+                _LOGGER.info("Analyzer not detected — falling back to genre-only octave disambiguation")
 
     @property
     def analyzer_client(self) -> AnalyzerClient:
@@ -192,9 +199,7 @@ class BpmPipeline:
         # wait for it and reuse its outcome via the cache.
         async with self._lock:
             self._current_token = token
-            result = await self._resolve_inner(
-                track_artist, track_title, duration, token
-            )
+            result = await self._resolve_inner(track_artist, track_title, duration, token)
         # Manual mood override — applied POST-resolution so it uniformly
         # beats cache, Deezer, and local analysis. The BPM-override
         # short-circuit already merged its own mood attrs (checked via
@@ -202,15 +207,9 @@ class BpmPipeline:
         # rewritten here. Octave gating is NOT re-run on synthetic
         # scores: disambiguation already ran on the automatic estimate.
         if result is not None and "mood_override" not in result.attrs:
-            override = (
-                self._overrides.get(track_artist, track_title)
-                if self._overrides is not None
-                else None
-            )
+            override = self._overrides.get(track_artist, track_title) if self._overrides is not None else None
             if override and override.get("mood_label"):
-                result.attrs.update(
-                    self._mood_attrs_from_override(override["mood_label"])
-                )
+                result.attrs.update(self._mood_attrs_from_override(override["mood_label"]))
         return result
 
     @property
@@ -237,14 +236,10 @@ class BpmPipeline:
         rule = RULE_MANUAL_HALF if factor == 0.5 else RULE_MANUAL_DOUBLE
         if self._overrides is None:
             raise RuntimeError("override store not configured")
-        await self._overrides.async_put(
-            artist, title, corrected, rule, current_bpm
-        )
+        await self._overrides.async_put(artist, title, corrected, rule, current_bpm)
         return corrected
 
-    async def async_set_bpm(
-        self, artist: str, title: str, bpm: float
-    ) -> float:
+    async def async_set_bpm(self, artist: str, title: str, bpm: float) -> float:
         """Store an exact-value manual BPM override for this track.
 
         Unlike halve/double this does NOT require a published BPM — the
@@ -255,14 +250,10 @@ class BpmPipeline:
             raise ValueError(f"override bpm must be > 0, got {bpm}")
         if self._overrides is None:
             raise RuntimeError("override store not configured")
-        await self._overrides.async_put(
-            artist, title, float(bpm), RULE_MANUAL_SET, float(bpm)
-        )
+        await self._overrides.async_put(artist, title, float(bpm), RULE_MANUAL_SET, float(bpm))
         return float(bpm)
 
-    async def async_set_mood(
-        self, artist: str, title: str, label: str
-    ) -> None:
+    async def async_set_mood(self, artist: str, title: str, label: str) -> None:
         """Store a manual mood override for this track (five heads)."""
         if self._overrides is None:
             raise RuntimeError("override store not configured")
@@ -310,9 +301,7 @@ class BpmPipeline:
                 return None
 
         try:
-            preview = await self._deezer.download_preview_bytes(
-                artist, title, duration
-            )
+            preview = await self._deezer.download_preview_bytes(artist, title, duration)
         except Exception:
             _LOGGER.debug("Mood enrichment preview download failed", exc_info=True)
             return None
@@ -324,12 +313,12 @@ class BpmPipeline:
             return None
 
         mood_attrs = self._mood_attrs_from_payload(payload)
-        # Cache mood alongside the BPM (per-ISRC when known).
-        key = cache_key(result.attrs.get("isrc"), artist, title, duration)
-        cached = self._cache.get(key) or {}
-        await self._cache.async_put(
-            key, {**cached, "bpm": result.bpm, **result.attrs, **mood_attrs}
-        )
+        # Cache mood alongside the BPM. Dual-key (stale-BPM fix): write to
+        # BOTH the ISRC key and the pre-match hash key so the next replay
+        # hits the cache instead of repeating the whole network path.
+        keys = cache_keys(result.attrs.get("isrc"), artist, title, duration)
+        cached = self._cache.get_first(keys) or {}
+        await self._cache.async_put_many(keys, {**cached, "bpm": result.bpm, **result.attrs, **mood_attrs})
         # Return ONLY the mood-routed keys (3.3.1). The caller forwards this
         # straight to the mood sensor via the mood_update hook, so without
         # this split the enrichment path handed the mood entity keys the
@@ -347,17 +336,11 @@ class BpmPipeline:
         if not payload:
             return None
         tags = payload.get("mood_tags") or []
-        scores = {
-            t.get("tag"): float(t.get("score", 0.0))
-            for t in tags
-            if isinstance(t, dict) and t.get("tag")
-        }
+        scores = {t.get("tag"): float(t.get("score", 0.0)) for t in tags if isinstance(t, dict) and t.get("tag")}
         return scores or None
 
     @staticmethod
-    def _derive_intensity_calmness(
-        scores: dict[str, float], arousal: float | None
-    ) -> tuple[float, float]:
+    def _derive_intensity_calmness(scores: dict[str, float], arousal: float | None) -> tuple[float, float]:
         """The pinned published intensity/calmness formula.
 
         Shared by the analyzer-payload path AND the manual-override path
@@ -366,14 +349,8 @@ class BpmPipeline:
         calmness = mean(relaxed, acoustic); a near-tie is broken by the
         analyzer arousal signal when available.
         """
-        intensity = (
-            float(scores["aggressive"])
-            + float(scores["party"])
-            + float(scores["electronic"])
-        ) / 3.0
-        calmness = (
-            float(scores["relaxed"]) + float(scores["acoustic"])
-        ) / 2.0
+        intensity = (float(scores["aggressive"]) + float(scores["party"]) + float(scores["electronic"])) / 3.0
+        calmness = (float(scores["relaxed"]) + float(scores["acoustic"])) / 2.0
         if arousal is not None and abs(intensity - calmness) < 0.05:
             intensity = max(intensity, float(arousal))
             calmness = min(calmness, 1.0 - float(arousal))
@@ -428,15 +405,10 @@ class BpmPipeline:
         # Explicit five-signal dict from the dedicated mood heads — the
         # analyzer emits it only when ALL five heads are healthy.
         scores = payload.get("mood_scores")
-        if not (
-            isinstance(scores, dict)
-            and EXPECTED_MOOD_SCORES.issubset(scores)
-        ):
+        if not (isinstance(scores, dict) and EXPECTED_MOOD_SCORES.issubset(scores)):
             scores = None
         if scores:
-            intensity, calmness = cls._derive_intensity_calmness(
-                scores, payload.get("arousal")
-            )
+            intensity, calmness = cls._derive_intensity_calmness(scores, payload.get("arousal"))
             attrs["intensity"] = intensity
             attrs["calmness"] = calmness
             attrs["mood_scores"] = scores
@@ -466,7 +438,10 @@ class BpmPipeline:
             if override and override.get("bpm"):
                 _LOGGER.info(
                     "AX BPM override hit for %s - %s → %.1f BPM (%s)",
-                    artist, title, override["bpm"], override.get("rule"),
+                    artist,
+                    title,
+                    override["bpm"],
+                    override.get("rule"),
                 )
                 attrs = {
                     "source": SOURCE_OVERRIDE,
@@ -477,30 +452,35 @@ class BpmPipeline:
                 # The same entry may also carry a mood override — merge
                 # the synthetic mood attrs so one publish carries both.
                 if override.get("mood_label"):
-                    attrs.update(
-                        self._mood_attrs_from_override(override["mood_label"])
-                    )
+                    attrs.update(self._mood_attrs_from_override(override["mood_label"]))
                 return ResolutionResult(override["bpm"], **attrs)
 
         # 1. Cache lookup — publish immediately, no network, no analysis.
-        key = cache_key(None, artist, title, duration)
-        cached = self._cache.get(key)
+        # The pre-match read passes isrc=None because resolving is what
+        # DISCOVERS the ISRC; cache_keys() still returns the hash key, and
+        # the writes below mirror every entry onto it (dual-key fix).
+        cached = self._cache.get_first(cache_keys(None, artist, title, duration))
         if cached and cached.get("bpm"):
             _LOGGER.debug(
                 "AX BPM cache hit for %s - %s → %s BPM",
-                artist, title, cached["bpm"],
+                artist,
+                title,
+                cached["bpm"],
             )
-            return ResolutionResult(cached["bpm"], **{
-                "source": "cache",
-                **{k: v for k, v in cached.items() if k != "bpm"},
-            })
+            return ResolutionResult(
+                cached["bpm"],
+                **{
+                    "source": "cache",
+                    **{k: v for k, v in cached.items() if k != "bpm"},
+                },
+            )
 
         # 2. Anonymous Deezer match. Returns (result, pending_match) where
         # pending_match is the bpm==0 match metadata for the local path —
         # strictly per-resolution, never stored on the instance.
         try:
             result, match = await asyncio.wait_for(
-                self._resolve_deezer(artist, title, duration, key),
+                self._resolve_deezer(artist, title, duration),
                 timeout=max(0.1, deadline - time.monotonic()),
             )
         except TimeoutError:
@@ -508,13 +488,17 @@ class BpmPipeline:
         if result is not None:
             _LOGGER.info(
                 "AX BPM: %s - %s → %.1f BPM (source: %s)",
-                artist, title, result.bpm, result.source,
+                artist,
+                title,
+                result.bpm,
+                result.source,
             )
             return result
         if time.monotonic() > deadline or self._current_token != token:
             _LOGGER.info(
-                "AX BPM: %s - %s → unresolved (budget exceeded or track "
-                "changed before Deezer match)", artist, title,
+                "AX BPM: %s - %s → unresolved (budget exceeded or track changed before Deezer match)",
+                artist,
+                title,
             )
             return None
 
@@ -534,7 +518,9 @@ class BpmPipeline:
             if itunes_match:
                 _LOGGER.debug(
                     "iTunes fallback match for %s - %s (id=%s)",
-                    artist, title, itunes_match.get("itunes_track_id"),
+                    artist,
+                    title,
+                    itunes_match.get("itunes_track_id"),
                 )
                 match = itunes_match
 
@@ -543,9 +529,7 @@ class BpmPipeline:
         # Deezer lookup must never reuse a previous track's match data.
         try:
             result = await asyncio.wait_for(
-                self._resolve_local(
-                    artist, title, duration, key, deadline, match
-                ),
+                self._resolve_local(artist, title, duration, deadline, match),
                 timeout=max(0.1, deadline - time.monotonic()),
             )
         except TimeoutError:
@@ -553,13 +537,17 @@ class BpmPipeline:
             return None
         if result is None:
             _LOGGER.info(
-                "AX BPM: %s - %s → unresolved (no Deezer match with bpm, "
-                "and local analysis unavailable or failed)", artist, title,
+                "AX BPM: %s - %s → unresolved (no Deezer match with bpm, and local analysis unavailable or failed)",
+                artist,
+                title,
             )
         else:
             _LOGGER.info(
                 "AX BPM: %s - %s → %.1f BPM (source: %s)",
-                artist, title, result.bpm, result.source,
+                artist,
+                title,
+                result.bpm,
+                result.source,
             )
         return result
 
@@ -568,7 +556,6 @@ class BpmPipeline:
         artist: str,
         title: str,
         duration: float | None,
-        key: str,
     ) -> tuple[ResolutionResult | None, dict | None]:
         """Resolve via Deezer metadata.
 
@@ -588,13 +575,14 @@ class BpmPipeline:
         deezer_bpm = track.get("bpm") or 0.0
         isrc = track.get("isrc")
         album_id = (track.get("album") or {}).get("id")
-        genres = (
-            await self._deezer.get_album_genres(album_id) if album_id else []
-        )
+        genres = await self._deezer.get_album_genres(album_id) if album_id else []
 
         _LOGGER.debug(
             "Deezer track %s: bpm=%s, isrc=%s, preview=%s",
-            match["id"], deezer_bpm, isrc, bool(track.get("preview")),
+            match["id"],
+            deezer_bpm,
+            isrc,
+            bool(track.get("preview")),
         )
 
         # Deezer metadata bpm present → publish as-is, NEVER corrected.
@@ -617,8 +605,8 @@ class BpmPipeline:
                 octave_rule=bpm_math.RULE_NONE,
                 preview_analyzed=False,
             )
-            await self._cache.async_put(
-                cache_key(isrc, artist, title, duration),
+            await self._cache.async_put_many(
+                cache_keys(isrc, artist, title, duration),
                 {"bpm": result.bpm, **result.attrs},
             )
             return result, None
@@ -651,7 +639,6 @@ class BpmPipeline:
         artist: str,
         title: str,
         duration: float | None,
-        key: str,
         deadline: float,
         match: dict | None,
     ) -> ResolutionResult | None:
@@ -668,9 +655,7 @@ class BpmPipeline:
         loop = asyncio.get_running_loop()
         fd, tmp_path = await loop.run_in_executor(
             None,
-            lambda: tempfile.mkstemp(
-                suffix=preview_suffix(preview_url), prefix="ax_bpm_"
-            ),
+            lambda: tempfile.mkstemp(suffix=preview_suffix(preview_url), prefix="ax_bpm_"),
         )
         os.close(fd)
         try:
@@ -688,9 +673,7 @@ class BpmPipeline:
             mood_payload: dict[str, Any] | None = None
 
             if self.mood_enabled and self._mood_ready:
-                analyzer_payload = await self._analyzer_client.async_analyze_file(
-                    tmp_path
-                )
+                analyzer_payload = await self._analyzer_client.async_analyze_file(tmp_path)
                 if analyzer_payload:
                     bpm_raw = analyzer_payload.get("bpm")
                     mood_payload = analyzer_payload
@@ -700,12 +683,8 @@ class BpmPipeline:
                 # tempo failed) → NumPy floor + optional concurrent mood.
                 mood_task = None
                 if self.mood_enabled and self._mood_ready and not mood_payload:
-                    mood_task = asyncio.ensure_future(
-                        self._analyzer_client.async_analyze_file(tmp_path)
-                    )
-                bpm_task = asyncio.ensure_future(
-                    self._analyzer.get_bpm(self._hass, tmp_path)
-                )
+                    mood_task = asyncio.ensure_future(self._analyzer_client.async_analyze_file(tmp_path))
+                bpm_task = asyncio.ensure_future(self._analyzer.get_bpm(self._hass, tmp_path))
                 done, pending = await asyncio.wait(
                     {t for t in (bpm_task, mood_task) if t},
                     timeout=min(remaining, ANALYSIS_TIMEOUT * 2),
@@ -714,27 +693,21 @@ class BpmPipeline:
                     task.cancel()
 
                 bpm_raw = bpm_task.result() if bpm_task in done else None
-                mood_payload = (
-                    mood_task.result()
-                    if mood_task in done and not mood_task.cancelled()
-                    else None
-                )
+                mood_payload = mood_task.result() if mood_task in done and not mood_task.cancelled() else None
 
             if not bpm_raw or bpm_raw <= 0:
                 return None
 
-            mood_scores = (
-                mood_payload.get("mood_scores") if mood_payload else None
-            ) or self._scores_from_tags(mood_payload)
+            mood_scores = (mood_payload.get("mood_scores") if mood_payload else None) or self._scores_from_tags(
+                mood_payload
+            )
 
             genres = match.get("genres") or []
             if self._octave_mode == OCTAVE_OFF:
                 genres = []
 
             # Octave disambiguation — only on the local tempo estimate.
-            disambiguated = bpm_math.apply_octave_disambiguation(
-                bpm_raw, mood_scores, genres
-            )
+            disambiguated = bpm_math.apply_octave_disambiguation(bpm_raw, mood_scores, genres)
 
             # Published mood attributes — ONE derivation (defects 1–3):
             # the local path merges the SAME _mood_attrs_from_payload the
@@ -745,17 +718,9 @@ class BpmPipeline:
             # below lets the derivation override the genre-only defaults).
             # Octave GATING above still uses compute_signals (/4, /3)
             # internally — no re-thresholding.
-            mood_attrs = (
-                self._mood_attrs_from_payload(mood_payload)
-                if mood_payload
-                else {}
-            )
+            mood_attrs = self._mood_attrs_from_payload(mood_payload) if mood_payload else {}
             mood_attrs.pop("mood_source", None)  # result-level source set below
-            source = (
-                SOURCE_ANALYZER
-                if mood_payload is not None and mood_payload.get("bpm")
-                else SOURCE_NUMPY
-            )
+            source = SOURCE_ANALYZER if mood_payload is not None and mood_payload.get("bpm") else SOURCE_NUMPY
             # bpm_engine (closeout): which engine produced the LOCAL tempo —
             # aubio (analyzer add-on) vs numpy (the floor). Deezer-metadata
             # BPM has no engine → attribute omitted. Semantics: this
@@ -772,11 +737,7 @@ class BpmPipeline:
                 "match_rank": match.get("match_rank"),
                 "bpm_raw": bpm_raw,
                 "genre": ", ".join(genres) if genres else None,
-                "genre_source": (
-                    f"{match.get('provider', 'deezer')}_album"
-                    if genres
-                    else None
-                ),
+                "genre_source": (f"{match.get('provider', 'deezer')}_album" if genres else None),
                 "intensity": disambiguated["intensity"],
                 "calmness": disambiguated["calmness"],
                 "octave_corrected": disambiguated["corrected"],
@@ -784,11 +745,9 @@ class BpmPipeline:
                 "preview_analyzed": True,
             }
             attrs.update(mood_attrs)
-            result = ResolutionResult(
-                disambiguated["bpm"], source=source, **attrs
-            )
-            await self._cache.async_put(
-                cache_key(match.get("isrc"), artist, title, duration),
+            result = ResolutionResult(disambiguated["bpm"], source=source, **attrs)
+            await self._cache.async_put_many(
+                cache_keys(match.get("isrc"), artist, title, duration),
                 {"bpm": result.bpm, **result.attrs},
             )
             return result
@@ -797,6 +756,7 @@ class BpmPipeline:
                 os.unlink(tmp_path)
             except OSError:
                 pass
+
 
 def make_result_from_cache(cached: dict[str, Any]) -> ResolutionResult:
     """Rebuild a ResolutionResult from a cache entry."""

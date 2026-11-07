@@ -100,7 +100,9 @@ def mock_session():
 def mock_cache():
     cache = MagicMock(spec=BpmCache)
     cache.get = MagicMock(return_value=None)
+    cache.get_first = MagicMock(return_value=None)
     cache.async_put = AsyncMock()
+    cache.async_put_many = AsyncMock()
     return cache
 
 
@@ -536,8 +538,8 @@ async def test_deezer_path_post_publish_enrichment(mock_session, mock_cache):
     assert mood_attrs["intensity"] == pytest.approx(0.3)
     # BPM unchanged by enrichment.
     assert result.bpm == 123.0
-    # Mood cached alongside the BPM.
-    put_entry = mock_cache.async_put.await_args.args[1]
+    # Mood cached alongside the BPM. Dual-key write: args are (keys, entry).
+    put_entry = mock_cache.async_put_many.await_args.args[1]
     assert put_entry["mood_source"] == "analyzer"
     assert put_entry["bpm"] == 123.0
 
@@ -620,7 +622,7 @@ async def test_cache_hit_no_network(mock_session, mock_cache):
         "octave_rule": "mood_double",
         "isrc": "GBDUW0000059",
     }
-    mock_cache.get = MagicMock(return_value=cached_entry)
+    mock_cache.get_first = MagicMock(return_value=cached_entry)
 
     result = await pipeline.async_resolve("Daft Punk", "Test Track", 224.0)
     assert result is not None
