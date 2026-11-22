@@ -22,6 +22,8 @@ adds the two signals that actually work when metadata does not move.
 
 from __future__ import annotations
 
+from .const import CONF_MEDIA_PLAYER
+
 #: Position (seconds) at or below which a playing item counts as "just
 #: started". A rewind to this point while the metadata is unchanged is
 #: treated as the next track starting, not as a user seek.
@@ -95,6 +97,29 @@ def looks_restarted(previous: float | None, current: float | None) -> bool:
     if previous is None or current is None:
         return False
     return current <= RESTART_POSITION_MAX and previous > RESTART_POSITION_MIN
+
+
+def configured_media_player(entry) -> str | None:
+    """The media_player entity_id the user actually configured.
+
+    Options override data, because the OPTIONS FLOW is where the user edits
+    this setting: ``AxBpmOptionsHandler.async_step_init`` returns an
+    ``async_create_entry`` inside an ``OptionsFlow``, so the submission is
+    written to ``entry.options`` ONLY. ``entry.data`` is never touched after
+    the entry is created (its one exception is ``discovered_analyzer_url``,
+    patched in by the Supervisor discovery handler).
+
+    Reading ``entry.data`` alone therefore subscribes the entities to the
+    entity_id from CREATION time while the pipeline resolves against the
+    configured one. After a media-player change in the options dialog no
+    state-change event ever arrives, ``_on_media_change`` never runs, and the
+    sensors sit on ``unknown`` forever — silently, because ``unknown`` is a
+    legal state and every failure path in this integration is quiet.
+
+    ``.get()`` on BOTH sides, never indexing: entries created before a key
+    existed must not raise.
+    """
+    return entry.options.get(CONF_MEDIA_PLAYER) or entry.data.get(CONF_MEDIA_PLAYER)
 
 
 def media_duration(state) -> float | None:

@@ -241,6 +241,31 @@ hand the mood entity the same keys. The split is idempotent (pinned by
 CACHE entry is deliberately left unshortened, so re-splitting on a later
 publish is lossless.
 
+**3.4.1 — one reader for the configured media player.** The options flow
+returns `async_create_entry` inside an `OptionsFlow`, so every user edit is
+written to `entry.options` only; `entry.data` is never updated after
+creation. Three call sites (`__init__.py`, `sensor.py`, `mood_sensor.py`)
+read `entry.data` anyway, so the pipeline resolved against the configured
+player while the entities subscribed `async_track_state_change_event` to
+the entity_id from CREATION time. After a media-player change no event ever
+arrived, `_on_media_change` never ran, and both sensors sat on `unknown`
+permanently — invisible, because `unknown` is legal and every failure path
+here is deliberately quiet. `media.configured_media_player()` now owns the
+merged read (`options` over `data`, `.get()` on both sides for legacy
+entries) and all three sites use it; the pipeline's
+`{**entry.data, **entry.options}` is unchanged, and
+`discovered_analyzer_url` keeps living in `entry.data` untouched. Setup now
+WARNs when the resolved entity_id is absent from the entity registry —
+with the caveat that YAML-defined players are legitimately unregistered.
+`async_added_to_hass` additionally resolves a track that is ALREADY playing,
+on the un-debounced path with `_generation` untouched and `_last_track`
+SEEDED (without the seed, the first position/volume tick bumps the
+generation and discards the in-flight startup result).
+
+Known limitation (documented, not fixed): `_arm_watchdog` derives its delay
+from `media_duration - media_position`, which is meaningless for players
+that report a frozen `media_position`.
+
 ---
 
 ## Migration & legacy notes

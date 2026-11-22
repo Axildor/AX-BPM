@@ -136,6 +136,29 @@ def _stub_homeassistant() -> None:
             return True
     update_coordinator.CoordinatorEntity = _CoordinatorEntity
 
+    # Entity registry: sensor.py reads it at setup time for the
+    # "configured player does not exist" WARNING. The registry is attached
+    # lazily to the fake hass so tests can pre-populate entities by doing
+    # `hass._entity_registry.entities["media_player.x"] = object()`.
+    entity_registry = _ensure_module("homeassistant.helpers.entity_registry")
+
+    class _EntityRegistry:
+        def __init__(self):
+            self.entities = {}
+
+        def async_get(self, entity_id):
+            return self.entities.get(entity_id)
+
+    def _registry_for(hass):
+        reg = getattr(hass, "_entity_registry", None)
+        if reg is None:
+            reg = _EntityRegistry()
+            hass._entity_registry = reg
+        return reg
+
+    entity_registry.EntityRegistry = _EntityRegistry
+    entity_registry.async_get = _registry_for
+
     event = _ensure_module("homeassistant.helpers.event")
     def _track_state_change_event(hass, entities, action):
         # Record-free stub: returns an unsubscribe callable.

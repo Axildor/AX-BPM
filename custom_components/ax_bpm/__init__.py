@@ -11,7 +11,8 @@ from homeassistant.helpers import issue_registry as ir
 
 from .analyzer import analyzer_available
 from .analyzer_status import AnalyzerStatusCoordinator
-from .const import CONF_MEDIA_PLAYER, DOMAIN, PLATFORMS
+from .const import DOMAIN, PLATFORMS
+from .media import configured_media_player
 from .migration import async_migrate_entry  # noqa: F401 — HA entry point
 from .overrides import BpmOverrideStore
 from .pipeline import BpmPipeline
@@ -73,7 +74,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "overrides": overrides,
         "pipeline": pipeline,
         "status_coordinator": status_coordinator,
-        "media_player": entry.data.get(CONF_MEDIA_PLAYER),
+        # Merged read: the options flow writes entry.options, so reading
+        # entry.data here handed the SERVICES (halve/double/set_bpm/
+        # set_mood/clear_override) the player from creation time. The
+        # pipeline above already receives the merged view.
+        "media_player": configured_media_player(entry),
     }
 
     await async_setup_services(hass)

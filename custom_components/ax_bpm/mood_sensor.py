@@ -53,7 +53,12 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import DOMAIN, NAME
-from .media import looks_restarted, media_position, track_identity
+from .media import (
+    configured_media_player,
+    looks_restarted,
+    media_position,
+    track_identity,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,7 +69,11 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the AX BPM mood sensor from a config entry."""
-    media_player_id = entry.data.get("media_player")
+    # Merged read (options win) — see media.configured_media_player. Both
+    # entities MUST resolve the same id as the pipeline, or this sensor
+    # subscribes to a player that never fires and its immediate clear on
+    # track change silently stops happening.
+    media_player_id = configured_media_player(entry)
     if not media_player_id:
         return  # the BPM sensor already logged the error
 

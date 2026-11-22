@@ -58,13 +58,13 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import STATE_OFF, STATE_PLAYING
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 
 from .analyzer_status import AxBpmAnalyzerStatusSensor
 from .const import (
-    CONF_MEDIA_PLAYER,
     DOMAIN,
     NAME,
     PUBLISH_GRACE,
@@ -73,6 +73,7 @@ from .const import (
     WATCHDOG_GRACE,
 )
 from .media import (
+    configured_media_player,
     looks_restarted,
     media_duration,
     media_position,
@@ -90,10 +91,29 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the AX BPM sensor from a config entry."""
-    media_player_id = entry.data.get(CONF_MEDIA_PLAYER)
+    # Merged read (options win): the options flow writes entry.options, so
+    # reading entry.data here subscribed both entities to the entity_id from
+    # CREATION time while the pipeline resolved against the configured one.
+    # No event → _on_media_change never ran → nothing ever resolved, and
+    # `unknown` is a legal state, so it looked healthy while doing nothing.
+    media_player_id = configured_media_player(entry)
     if not media_player_id:
         _LOGGER.error("No media player configured for AX BPM")
         return
+
+    # Setup-time diagnosability for the failure above: an entity_id that is
+    # absent from the registry will never emit a state-change event, so the
+    # sensors would stay `unknown` indefinitely with no further trace.
+    # NOT an error: entities from YAML platforms without a unique_id are
+    # legitimately unregistered, hence the caveat rather than a verdict.
+    if entity_registry.async_get(hass).async_get(media_player_id) is None:
+        _LOGGER.warning(
+            "AX BPM: configured media player %s is not in the entity registry — "
+            "no state changes will arrive and the sensors will stay unknown. "
+            "Expected for a YAML-configured player; otherwise open the AX BPM "
+            "options dialog and re-select the media player",
+            media_player_id,
+        )
 
     entry_data = hass.data[DOMAIN][entry.entry_id]
     pipeline = entry_data["pipeline"]
@@ -149,7 +169,7 @@ class AxBpmSensor(SensorEntity):
         )
 
     async def async_added_to_hass(self) -> None:
-        """Subscribe to the media player."""
+        """Subscribe to the media player, then resolve what is playing now."""
         self.async_on_remove(async_track_state_change_event(self.hass, [self._media_player_id], self._on_media_change))
         # Service hooks (services.py): immediate re-resolve after a
         # halve/double/clear mutation, and a getter for the currently
@@ -161,6 +181,22 @@ class AxBpmSensor(SensorEntity):
         entry_data = self.hass.data[DOMAIN][self._entry.entry_id]
         entry_data["refresh_sensor"] = self._refresh_now
         entry_data["get_sensor_bpm"] = self._get_published_bpm
+
+        # Restart while a track is already playing: the subscription above
+        # only delivers FUTURE changes, and a player that does not churn its
+        # attributes may not emit one for minutes. Resolve the current track
+        # now, through the same un-debounced path _refresh_now uses.
+        #
+        # _generation is NOT bumped (same track — the result must survive the
+        # generation guard) and _last_track is SEEDED, never cleared: without
+        # the seed the first position/volume tick looks like a track change,
+        # bumps the generation and discards this in-flight result, then
+        # re-resolves TRACK_DEBOUNCE later.
+        state = self.hass.states.get(self._media_player_id)
+        if state is not None and state.state == STATE_PLAYING:
+            self._last_track = track_identity(state)
+            self._last_position = media_position(state)
+            self.hass.async_create_task(self._async_resolve())
 
     async def async_will_remove_from_hass(self) -> None:
         """Cancel every pending timer (no callbacks after removal)."""

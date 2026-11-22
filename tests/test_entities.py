@@ -118,6 +118,14 @@ async def test_sensor_hooks_are_functional():
 
     entry_data = hass.data[DOMAIN][ENTRY_ID]
 
+    # The fake player is already "playing", so async_added_to_hass scheduled
+    # an immediate startup resolution (3.4.1). Drain it before asserting on
+    # the refresh path — the pipeline is a bare object here, so close the
+    # coroutine to avoid an un-awaited warning.
+    assert len(hass.created_tasks) == 1
+    hass.created_tasks[0].close()
+    hass.created_tasks.clear()
+
     # get_sensor_bpm mirrors the published native value.
     sensor._attr_native_value = 123.5
     assert entry_data["get_sensor_bpm"]() == 123.5
@@ -127,8 +135,6 @@ async def test_sensor_hooks_are_functional():
     entry_data["refresh_sensor"]()
     assert sensor._last_track is None
     assert len(hass.created_tasks) == 1
-    # Drain the scheduled resolve coroutine (pipeline is a bare object —
-    # async_resolve would fail; close it to avoid an un-awaited warning).
     hass.created_tasks[0].close()
 
 

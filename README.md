@@ -260,6 +260,21 @@ Two extra safeguards keep a value from outliving its track:
 fabricated number, so long-term statistics stay meaningful. The 120 BPM
 fallback belongs to the card, not the sensor.
 
+**Changing the media player (3.4.1).** The player you pick in the options
+dialog is what the sensors listen to. Settings you change there are stored
+as *options*, so after an edit the entities follow the newly selected player
+immediately — reloading the integration applies it. If you select an entity
+that doesn't exist (for example one that was renamed), setup logs a warning
+naming the entity id and pointing back at the options dialog, instead of the
+sensor sitting silently on `unknown`. The same warning is expected — and
+harmless — for a `media_player` defined in YAML, because those entities are
+not in Home Assistant's entity registry.
+
+**Restarting mid-track.** If a track is already playing when Home Assistant
+starts, the BPM is resolved straight away instead of waiting for the player
+to report a change. A player that never updates its attributes would
+otherwise leave the sensor at `unknown` until the next song.
+
 ## Mood sensor
 
 `sensor.ax_bpm_mood` — state is the mood label of the current track:
